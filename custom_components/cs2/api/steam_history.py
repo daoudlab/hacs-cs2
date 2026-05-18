@@ -18,8 +18,9 @@ _CURRENCY_DIVISOR = 100.0  # Steam returns prices in cents for EUR (currency=3)
 def _decode_cookie(raw: str) -> str:
     """URL-decode cookie value (browsers copy it URL-encoded)."""
     decoded = urllib.parse.unquote(raw)
-    if any(c in decoded for c in ("\r", "\n", "\x00")):
-        raise ValueError("Invalid cookie value: CRLF/NUL characters forbidden")
+    # Block CRLF/NUL and cookie injection chars (; , space) that could fragment the header
+    if any(c in decoded for c in ("\r", "\n", "\x00", ";", ",", " ", "\t")):
+        raise ValueError("Invalid cookie value: forbidden characters")
     return decoded
 
 

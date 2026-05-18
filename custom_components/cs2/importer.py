@@ -49,8 +49,10 @@ async def async_run_import(
         stop,
     )
 
-    if result["daily_totals"]:
+    if result["daily_totals"] and not (stop and stop.is_set()):
         await _inject_statistics(hass, result["daily_totals"])
+    elif stop and stop.is_set():
+        _LOGGER.info("CS2 import: stopped early — skipping statistic injection to avoid partial data")
 
     _LOGGER.info(
         "CS2 import complete: %d days, %d items fetched, %d skipped",

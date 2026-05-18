@@ -357,7 +357,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             all_fresh_prices: dict[str, float] = {}
             total_stale = 0
             total_missing = 0
-            float_cache = dict(self._float_cache)
 
             for appid, contextid, slug, game_name in active_apps:
                 if self._stop.is_set():
@@ -524,6 +523,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             ).isoformat()
             snapshots = {k: v for k, v in snapshots.items() if k >= cutoff}
 
+        # Snapshot float_cache AFTER game loop so newly fetched floats are persisted
+        float_cache = dict(self._float_cache)
         cycle_duration = round(time.monotonic() - cycle_start, 1)
 
         self._last_cycle_stats = {

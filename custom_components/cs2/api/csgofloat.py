@@ -95,6 +95,6 @@ def _fetch_one(client: httpx.Client, inspect_link: str, name: str) -> float | No
             val = data.get("iteminfo", {}).get("floatvalue")
             if val is not None:
                 return round(float(val), 6)
-    except Exception as err:
-        _LOGGER.debug("CSGOFloat error for %s: %s", name, err)
+    except (httpx.HTTPError, httpx.TimeoutException) as err:
+        _LOGGER.debug("CSGOFloat error for %s: %s", name, type(err).__name__)
     return None

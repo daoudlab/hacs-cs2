@@ -138,7 +138,7 @@ def _fetch_one(
         try:
             resp = client.get(url, headers=MARKET_HEADERS, timeout=30)
         except httpx.HTTPError as err:
-            _LOGGER.warning("HTTP error (attempt %d) for %s: %s", attempt + 1, name, err)
+            _LOGGER.warning("HTTP error (attempt %d) for %s: %s", attempt + 1, name, type(err).__name__)
             if attempt < rl.max_retries - 1:
                 _sleep(rl.retry_backoff_base**attempt, stop)
             continue
