@@ -237,6 +237,10 @@ class SteamItemSensor(_SteamBase):
         return (self.coordinator.data or {}).get("items_by_slug", {}).get(key, {})
 
     @property
+    def entity_picture(self) -> str | None:
+        return self._item().get("entity_picture")
+
+    @property
     def native_value(self) -> float | None:
         return self._item().get("current_price")
 
@@ -256,7 +260,6 @@ class SteamItemSensor(_SteamBase):
             "rarity_color": item.get("rarity_color"),
             "float_value": item.get("float_value"),
             "quantity": item.get("quantity", 1),
-            "entity_picture": item.get("entity_picture"),
             "last_updated_time": self._last_updated,
         }
 

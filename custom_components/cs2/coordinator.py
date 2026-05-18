@@ -123,6 +123,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_cycle_stats: dict[str, Any] = {}
         self._alert_state: dict[str, str] = {}  # name → "high" | "low" | "none"
         self._stop = threading.Event()
+        self._import_running: bool = False
         self.config_entry = entry
 
     def stop(self) -> None:
@@ -367,7 +368,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     break
 
                 # ── Fetch inventories for this game ────────────────────────────
-                merged: dict[str, dict] = {}
+                # Keep raw list (duplicates = owned copies) so compute_item_metrics
+                # can count quantity correctly per unique market_hash_name.
+                raw_items: list[dict] = []
                 accounts_ok = 0
                 for steam_id, account_name in self.accounts:
                     try:
@@ -385,29 +388,33 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         or item["market_hash_name"] in tracked_extras
                     ]
                     for item in trackable:
-                        name = item["market_hash_name"]
-                        if name not in merged:
-                            merged[name] = {**item}
-                        else:
-                            merged[name]["_qty"] = merged[name].get("_qty", 1) + 1
+                        raw_items.append(item)
                         pic = item.get("entity_picture")
                         if pic:
-                            self._entity_pictures[name] = pic
+                            self._entity_pictures[item["market_hash_name"]] = pic
 
                 if accounts_ok == 0 and self.accounts:
                     _LOGGER.warning("All %d accounts failed inventory for %s — skipping", len(self.accounts), game_name)
                     continue
 
-                inventory = list(merged.values())
+                inventory = raw_items
                 if cap > 0:
-                    inventory.sort(
-                        key=lambda i: max(
-                            buy_prices.get(i["market_hash_name"], 0.0),
-                            reference_prices.get(i["market_hash_name"], 0.0),
-                        ),
+                    # Sort by best known price descending so cap keeps most-valuable items
+                    seen_order: dict[str, int] = {}
+                    for item in inventory:
+                        name = item["market_hash_name"]
+                        if name not in seen_order:
+                            seen_order[name] = max(
+                                buy_prices.get(name, 0.0),
+                                reference_prices.get(name, 0.0),
+                            )
+                    inventory = sorted(
+                        inventory,
+                        key=lambda i: seen_order.get(i["market_hash_name"], 0.0),
                         reverse=True,
                     )
-                unique_names = [i["market_hash_name"] for i in inventory]
+                # Unique names in order (preserve first-seen order for cap slice)
+                unique_names = list(dict.fromkeys(i["market_hash_name"] for i in inventory))
                 names_to_fetch = unique_names[:cap] if cap > 0 else unique_names
                 names_set = set(names_to_fetch)
 
@@ -567,7 +574,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             {
                 "market_hash_name": w["market_hash_name"],
                 "appid": w.get("appid", 730),
-                "current_price": watchlist_prices.get(w["market_hash_name"]),
+                # owned watched items have price in all_fresh_prices, not watchlist_prices
+                "current_price": all_fresh_prices.get(w["market_hash_name"]) or watchlist_prices.get(w["market_hash_name"]),
                 "target_price": w.get("target_price"),
                 "note": w.get("note", ""),
                 "slug": make_slug(w["market_hash_name"]),

@@ -168,15 +168,14 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 self._data[CONF_IMPORT_START_DATE] = start_date
-                # Embed flow_id so async_setup_entry can match the pending import correctly
-                self._data["_setup_flow_id"] = self.flow_id
 
                 accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
                 title = " + ".join(name for _, name in accounts)
 
                 if cookie:
+                    # Key by steam_ids so async_setup_entry can find it without storing flow_id in entry.data
                     self.hass.data.setdefault(DOMAIN, {}).setdefault("pending_imports", {})[
-                        self.flow_id
+                        self._data[CONF_STEAM_IDS]
                     ] = {"cookie": cookie, "start_date": start_date}
 
                 return self.async_create_entry(title=title, data=self._data)
@@ -206,6 +205,10 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class CS2OptionsFlow(config_entries.OptionsFlow):
     """Handle options flow (re-configure after setup)."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        super().__init__()
+        self.config_entry = config_entry
 
     async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}

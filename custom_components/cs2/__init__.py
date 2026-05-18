@@ -11,6 +11,7 @@ from .const import (
     CONF_IMPORT_START_DATE,
     CONF_STEAM_COOKIE,
     CONF_MIN_ITEM_VALUE,
+    CONF_STEAM_IDS,
     DEFAULT_MIN_VALUE,
     SERVICE_RUN_IMPORT,
     SERVICE_GENERATE_DASHBOARDS,
@@ -26,16 +27,9 @@ PLATFORMS = ["sensor"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = CS2Coordinator(hass, entry)
 
-    # Pop the pending import cookie under DOMAIN namespace — guarantees cleanup even if setup fails
-    flow_id = entry.data.get("_setup_flow_id")
-    pending = None
-    try:
-        if flow_id:
-            pending = hass.data.get(DOMAIN, {}).get("pending_imports", {}).pop(flow_id, None)
-    finally:
-        # Second pop is a no-op if already cleaned; ensures cleanup on unexpected exceptions
-        if flow_id:
-            hass.data.get(DOMAIN, {}).get("pending_imports", {}).pop(flow_id, None)
+    # Pop the pending import cookie keyed by steam_ids (set during config flow step_import)
+    steam_ids = entry.data.get(CONF_STEAM_IDS, "")
+    pending = hass.data.get(DOMAIN, {}).get("pending_imports", {}).pop(steam_ids, None)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -45,8 +39,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.async_create_task(coordinator.async_request_refresh())
 
     if pending and pending.get("cookie"):
+        coordinator._import_running = True
         hass.async_create_task(
-            _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"), stop=coordinator._stop)
+            _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"), coordinator.min_item_value, stop=coordinator._stop)
         )
 
     # Register services (once per domain)
@@ -147,10 +142,14 @@ async def _handle_run_import(call: ServiceCall) -> None:
         return
 
     coordinator = coordinators[0]
+    if coordinator._import_running:
+        _LOGGER.warning("cs2.run_import: import already in progress — ignoring duplicate call")
+        return
     if not coordinator.data:
         _LOGGER.warning("cs2.run_import: no data yet — wait for first scan cycle")
         return
 
+    coordinator._import_running = True
     hass.async_create_task(
         _run_import(hass, coordinator, cookie, start_date, min_value, stop=coordinator._stop)
     )
@@ -169,6 +168,7 @@ async def _run_import(
     items = (coordinator.data or {}).get("items", [])
     if not items:
         _LOGGER.warning("cs2 import: no items in coordinator data, skipping")
+        coordinator._import_running = False
         return
 
     try:
@@ -176,6 +176,8 @@ async def _run_import(
         _LOGGER.info("cs2 import finished: %s", result)
     except Exception as err:
         _LOGGER.error("cs2 import failed: %s", err)
+    finally:
+        coordinator._import_running = False
 
 
 async def _handle_generate_dashboards(call: ServiceCall) -> None:
