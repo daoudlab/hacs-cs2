@@ -33,6 +33,50 @@
       "invalid_steam_ids": "Invalid Steam ID format. Must be 17-digit numbers, optionally followed by :alias."
     }
   },
+  "services": {
+    "run_import": {
+      "name": "Run Historical Import",
+      "description": "Fetch Steam Market price history for all inventory items and inject into HA recorder statistics.",
+      "fields": {
+        "steam_cookie": {
+          "name": "Steam Cookie",
+          "description": "Value of the steamLoginSecure cookie (Steam session authentication)."
+        },
+        "import_start_date": {
+          "name": "Import Start Date",
+          "description": "Only import history from this date onwards (YYYY-MM-DD). Leave empty for full history."
+        },
+        "min_item_value": {
+          "name": "Minimum Item Value",
+          "description": "Skip items below this price in EUR (0 = include all items)."
+        }
+      }
+    },
+    "generate_dashboards": {
+      "name": "Generate Dashboards",
+      "description": "Write Lovelace YAML dashboard files to the steam_dashboards/ folder in your config directory.",
+      "fields": {}
+    },
+    "force_refresh": {
+      "name": "Force Refresh",
+      "description": "Trigger an immediate Steam inventory and price scan outside the normal interval.",
+      "fields": {}
+    },
+    "set_buy_price": {
+      "name": "Set Buy Price",
+      "description": "Record or remove the purchase price of an item in cs2_buy_prices.json.",
+      "fields": {
+        "market_hash_name": {
+          "name": "Market Hash Name",
+          "description": "Exact Steam Market name of the item (e.g. 'AK-47 | Redline (Field-Tested)')."
+        },
+        "price": {
+          "name": "Price",
+          "description": "Purchase price in EUR. Set to 0 or leave empty to remove the entry."
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {

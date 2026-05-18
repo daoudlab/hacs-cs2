@@ -13,14 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from .const import (
-    DOMAIN,
-    SENSOR_TOTAL_ID,
-    SENSOR_GAME_PREFIX,
-    SENSOR_ITEM_PREFIX,
-    SENSOR_SYNC_ID,
-    SENSOR_WATCHLIST_PREFIX,
-)
+from .const import DOMAIN
 from .coordinator import CS2Coordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -123,7 +116,10 @@ class SteamTotalSensor(_SteamBase):
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
-        self.entity_id = SENSOR_TOTAL_ID
+
+    @property
+    def suggested_object_id(self) -> str:
+        return "steam_inventory_total"
 
     @property
     def native_value(self) -> float | None:
@@ -166,7 +162,10 @@ class SteamGameSensor(_SteamBase):
         self._game_name = game_name
         self._attr_unique_id = f"steam_game_{slug}_total"
         self._attr_name = f"Steam {game_name} Total"
-        self.entity_id = f"{SENSOR_GAME_PREFIX}{slug}_total"
+
+    @property
+    def suggested_object_id(self) -> str:
+        return f"steam_{self._slug}_total"
 
     def _game(self) -> dict:
         return (self.coordinator.data or {}).get("per_game", {}).get(self._slug, {})
@@ -220,9 +219,13 @@ class SteamItemSensor(_SteamBase):
         self._game_slug = game_slug
         self._market_name = market_name
         prefix = f"{game_slug}_" if game_slug else ""
+        self._prefix = prefix
         self._attr_unique_id = f"steam_item_{prefix}{slug}"
         self._attr_name = market_name
-        self.entity_id = f"{SENSOR_ITEM_PREFIX}{prefix}{slug}"
+
+    @property
+    def suggested_object_id(self) -> str:
+        return f"steam_item_{self._prefix}{self._slug}"
 
     def _item(self) -> dict:
         key = f"{self._game_slug}__{self._slug}" if self._game_slug else self._slug
@@ -272,7 +275,10 @@ class SteamSyncSensor(_SteamBase):
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
-        self.entity_id = SENSOR_SYNC_ID
+
+    @property
+    def suggested_object_id(self) -> str:
+        return "steam_sync_status"
 
     @property
     def native_value(self) -> str:
@@ -314,7 +320,10 @@ class SteamWatchlistSensor(_SteamBase):
         self._attr_unique_id = f"steam_watch_{slug}"
         self._attr_name = f"Watch: {market_name[:40]}"
         self._attr_icon = "mdi:eye"
-        self.entity_id = f"{SENSOR_WATCHLIST_PREFIX}{slug}"
+
+    @property
+    def suggested_object_id(self) -> str:
+        return f"steam_watch_{self._slug}"
 
     def _watch(self) -> dict:
         return (self.coordinator.data or {}).get("watchlist_by_slug", {}).get(self._slug, {})

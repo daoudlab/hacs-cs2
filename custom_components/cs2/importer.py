@@ -17,7 +17,7 @@ from homeassistant.components.recorder.statistics import (
 from homeassistant.util import dt as dt_util
 
 from .api.steam_history import fetch_item_history, interpolate_gaps
-from .const import DOMAIN, SENSOR_TOTAL_ID
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 

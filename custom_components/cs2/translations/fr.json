@@ -33,6 +33,50 @@
       "invalid_steam_ids": "Format Steam ID invalide. Doit être un nombre de 17 chiffres, suivi optionnellement de :alias."
     }
   },
+  "services": {
+    "run_import": {
+      "name": "Import historique",
+      "description": "Récupère l'historique des prix Steam Market pour tous les items et les injecte dans les statistiques HA.",
+      "fields": {
+        "steam_cookie": {
+          "name": "Cookie Steam",
+          "description": "Valeur du cookie steamLoginSecure (authentification session Steam)."
+        },
+        "import_start_date": {
+          "name": "Date de début d'import",
+          "description": "N'importer l'historique qu'à partir de cette date (AAAA-MM-JJ). Laisser vide pour tout l'historique."
+        },
+        "min_item_value": {
+          "name": "Valeur minimale d'item",
+          "description": "Ignorer les items en dessous de ce prix en EUR (0 = inclure tous les items)."
+        }
+      }
+    },
+    "generate_dashboards": {
+      "name": "Générer les dashboards",
+      "description": "Génère les fichiers YAML Lovelace dans le dossier steam_dashboards/ de votre config.",
+      "fields": {}
+    },
+    "force_refresh": {
+      "name": "Forcer le rafraîchissement",
+      "description": "Déclenche immédiatement un scan inventaire + prix sans attendre l'intervalle planifié.",
+      "fields": {}
+    },
+    "set_buy_price": {
+      "name": "Définir le prix d'achat",
+      "description": "Enregistre ou supprime le prix d'achat d'un item dans cs2_buy_prices.json.",
+      "fields": {
+        "market_hash_name": {
+          "name": "Nom Steam Market",
+          "description": "Nom exact Steam Market de l'item (ex : 'AK-47 | Redline (Field-Tested)')."
+        },
+        "price": {
+          "name": "Prix",
+          "description": "Prix d'achat en EUR. Mettre 0 ou laisser vide pour supprimer l'entrée."
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {
