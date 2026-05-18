@@ -20,6 +20,8 @@ from .const import (
     SENSOR_TOTAL_ID,
     SENSOR_GAME_PREFIX,
     SENSOR_ITEM_PREFIX,
+    SENSOR_SYNC_ID,
+    SENSOR_WATCHLIST_PREFIX,
 )
 from .coordinator import CS2Coordinator
 
@@ -33,10 +35,14 @@ async def async_setup_entry(
 ) -> None:
     coordinator: CS2Coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Start with the global total — always present
-    entities: list[SensorEntity] = [SteamTotalSensor(coordinator)]
+    # Always-present sensors
+    entities: list[SensorEntity] = [
+        SteamTotalSensor(coordinator),
+        SteamSyncSensor(coordinator),
+    ]
     known_game_slugs: set[str] = set()
     known_item_slugs: set[str] = set()
+    known_watch_slugs: set[str] = set()
 
     data = coordinator.data or {}
     for slug, game in data.get("per_game", {}).items():
@@ -51,9 +57,15 @@ async def async_setup_entry(
             entities.append(SteamItemSensor(coordinator, item_slug, item["name"], game_slug))
             known_item_slugs.add(key)
 
+    for watch in data.get("watchlist", []):
+        w_slug = watch.get("slug", "")
+        if w_slug and w_slug not in known_watch_slugs:
+            entities.append(SteamWatchlistSensor(coordinator, w_slug, watch["market_hash_name"]))
+            known_watch_slugs.add(w_slug)
+
     async_add_entities(entities)
 
-    # Dynamically add new game/item sensors as coordinator data arrives
+    # Dynamically add new sensors as coordinator data arrives
     def _handle_coordinator_update() -> None:
         new: list[SensorEntity] = []
         _data = coordinator.data or {}
@@ -71,6 +83,13 @@ async def async_setup_entry(
             if key not in known_item_slugs:
                 e = SteamItemSensor(coordinator, item_slug, item["name"], game_slug)
                 known_item_slugs.add(key)
+                new.append(e)
+
+        for watch in _data.get("watchlist", []):
+            w_slug = watch.get("slug", "")
+            if w_slug and w_slug not in known_watch_slugs:
+                e = SteamWatchlistSensor(coordinator, w_slug, watch["market_hash_name"])
+                known_watch_slugs.add(w_slug)
                 new.append(e)
 
         if new:
@@ -236,3 +255,87 @@ class SteamItemSensor(_SteamBase):
     @property
     def available(self) -> bool:
         return bool(self._item())
+
+
+# ── Sync status sensor ────────────────────────────────────────────────────────
+
+class SteamSyncSensor(_SteamBase):
+    """Integration health sensor — sensor.steam_sync_status."""
+
+    _attr_unique_id = "steam_sync_status"
+    _attr_name = "Steam Sync Status"
+    _attr_icon = "mdi:sync"
+    _attr_device_class = None
+    _attr_state_class = None
+    _attr_native_unit_of_measurement = None
+
+    def __init__(self, coordinator: CS2Coordinator) -> None:
+        super().__init__(coordinator)
+        self.entity_id = SENSOR_SYNC_ID
+
+    @property
+    def native_value(self) -> str:
+        if not self.coordinator.last_update_success:
+            return "error"
+        if not (self.coordinator.data or {}).get("active_apps"):
+            return "no_games"
+        return "ok"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        stats = self.coordinator.last_cycle_stats
+        data = self.coordinator.data or {}
+        return {
+            "last_update": stats.get("last_update"),
+            "cycle_duration_s": stats.get("cycle_duration_s"),
+            "total_value": stats.get("total_value"),
+            "items_count": stats.get("items_count"),
+            "active_games": stats.get("active_games"),
+            "stale_count": data.get("stale_count"),
+            "missing_count": data.get("missing_count"),
+            "last_update_success": self.coordinator.last_update_success,
+        }
+
+
+# ── Watchlist sensor ──────────────────────────────────────────────────────────
+
+class SteamWatchlistSensor(_SteamBase):
+    """Tracks price of a non-owned item — sensor.steam_watch_{slug}."""
+
+    def __init__(self, coordinator: CS2Coordinator, slug: str, market_name: str) -> None:
+        super().__init__(coordinator)
+        self._slug = slug
+        self._market_name = market_name
+        self._attr_unique_id = f"steam_watch_{slug}"
+        self._attr_name = f"Watch: {market_name[:40]}"
+        self._attr_icon = "mdi:eye"
+        self.entity_id = f"{SENSOR_WATCHLIST_PREFIX}{slug}"
+
+    def _watch(self) -> dict:
+        for w in (self.coordinator.data or {}).get("watchlist", []):
+            if w.get("slug") == self._slug:
+                return w
+        return {}
+
+    @property
+    def native_value(self) -> float | None:
+        price = self._watch().get("current_price")
+        return round(price, 2) if price is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        w = self._watch()
+        price = w.get("current_price")
+        target = w.get("target_price")
+        return {
+            "market_hash_name": self._market_name,
+            "appid": w.get("appid", 730),
+            "target_price": target,
+            "note": w.get("note", ""),
+            "below_target": (price is not None and target is not None and price <= target),
+            "last_updated_time": self._last_updated,
+        }
+
+    @property
+    def available(self) -> bool:
+        return bool(self._watch())

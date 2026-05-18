@@ -21,6 +21,8 @@ def compute_item_metrics(
     previous_prices: dict[str, float],
     buy_prices: dict[str, float],
     reference_prices: dict[str, float],
+    prices_24h: dict[str, float] | None = None,
+    prices_7d: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Compute per-item metrics keyed by market_hash_name.
 
@@ -72,6 +74,10 @@ def compute_item_metrics(
         delta_from_start = (
             round(current - buy, 2) if buy > 0 and current is not None else None
         )
+        p24 = (prices_24h or {}).get(name)
+        p7d = (prices_7d or {}).get(name)
+        delta_24h = round(current - p24, 2) if current is not None and p24 is not None else None
+        delta_7d = round(current - p7d, 2) if current is not None and p7d is not None else None
 
         results.append(
             {
@@ -82,6 +88,8 @@ def compute_item_metrics(
                 "buy_price": round(buy, 2) if buy else None,
                 "before_crash": round(ref, 2) if ref else None,
                 "delta_yesterday": delta_yesterday,
+                "delta_24h": delta_24h,
+                "delta_7d": delta_7d,
                 "delta_since_crash": delta_since_crash,
                 "delta_from_start": delta_from_start,
                 "roi": roi,

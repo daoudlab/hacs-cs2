@@ -18,6 +18,7 @@ from .const import (
     CONF_MIN_ITEM_VALUE,
     CONF_MAX_ITEMS,
     CONF_INCLUDE_TRADING_CARDS,
+    CONF_FETCH_FLOATS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
@@ -25,11 +26,31 @@ from .const import (
     CONF_IMPORT_START_DATE,
     CONF_STEAM_COOKIE,
     CONF_FORGET_COOKIE,
+    STEAM_INVENTORY_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 _STEAM_ID_RE = re.compile(r"^\d{17}$")
+
+
+def _test_steam_connection(steam_id: str) -> str:
+    """Quick probe of Steam inventory — returns a status string."""
+    import httpx
+    from .const import HEADERS
+    url = STEAM_INVENTORY_URL.format(steam_id=steam_id, appid=730, contextid=2) + "&count=1"
+    try:
+        resp = httpx.get(url, headers=HEADERS, timeout=8)
+        if resp.status_code == 200:
+            count = resp.json().get("total_inventory_count", 0)
+            return f"✅ Connecté — {count} items CS2 détectés"
+        if resp.status_code == 403:
+            return "⚠️ Inventaire privé — rendez-le public pour le tracking"
+        if resp.status_code == 429:
+            return "⚠️ Rate-limited par Steam — l'intégration fonctionnera quand même"
+        return f"⚠️ HTTP {resp.status_code} — vérifiez le Steam ID"
+    except Exception:
+        return "⚠️ Steam inaccessible — l'intégration fonctionnera quand le réseau sera disponible"
 
 
 def _parse_steam_ids(raw: str) -> list[tuple[str, str]]:
@@ -78,6 +99,7 @@ STEP_SETTINGS_SCHEMA = vol.Schema(
             int, vol.Range(min=0)
         ),
         vol.Optional(CONF_INCLUDE_TRADING_CARDS, default=False): bool,
+        vol.Optional(CONF_FETCH_FLOATS, default=False): bool,
     }
 )
 
@@ -90,11 +112,23 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
         errors: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {
+            "example": "76561190000000001:main,76561190000000002:alt",
+            "connection_status": "",
+        }
+
         if user_input is not None:
             try:
-                _validate_steam_ids(user_input[CONF_STEAM_IDS])
+                accounts = _validate_steam_ids(user_input[CONF_STEAM_IDS])
                 self._data[CONF_STEAM_IDS] = user_input[CONF_STEAM_IDS]
+
+                # Best-effort Steam connection test — never blocks the flow
+                status = await self.hass.async_add_executor_job(
+                    _test_steam_connection, accounts[0][0]
+                )
+                _LOGGER.info("Steam connection test: %s", status)
                 return await self.async_step_settings()
+
             except vol.Invalid:
                 errors["base"] = "invalid_steam_ids"
 
@@ -102,9 +136,7 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_ACCOUNTS_SCHEMA,
             errors=errors,
-            description_placeholders={
-                "example": "76561190000000001:main,76561190000000002:alt"
-            },
+            description_placeholders=description_placeholders,
         )
 
     async def async_step_settings(self, user_input: dict | None = None) -> FlowResult:
@@ -206,6 +238,10 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_INCLUDE_TRADING_CARDS,
                     default=current.get(CONF_INCLUDE_TRADING_CARDS, False),
+                ): bool,
+                vol.Optional(
+                    CONF_FETCH_FLOATS,
+                    default=current.get(CONF_FETCH_FLOATS, False),
                 ): bool,
             }
         )

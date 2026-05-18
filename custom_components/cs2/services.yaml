@@ -3,7 +3,37 @@ generate_dashboards:
   description: >
     Write Lovelace dashboard YAML files to /config/steam_dashboards/:
     one global dashboard + one per detected game.
-    Files can be referenced as YAML dashboards in HA.
+
+force_refresh:
+  name: Force Refresh
+  description: >
+    Trigger an immediate inventory + price refresh without waiting
+    for the next scheduled interval.
+
+set_buy_price:
+  name: Set Buy Price
+  description: >
+    Set or remove the purchase price for an item in cs2_buy_prices.json.
+    Set price to 0 or leave empty to remove the entry.
+  fields:
+    market_hash_name:
+      name: Market Hash Name
+      description: Exact Steam market name of the item (e.g. "AK-47 | Redline (Field-Tested)")
+      required: true
+      selector:
+        text:
+    price:
+      name: Price (EUR)
+      description: Purchase price in EUR. Set to 0 to remove.
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.01
+          mode: box
+          unit_of_measurement: EUR
 
 run_import:
   name: Run Historical Import
@@ -14,14 +44,14 @@ run_import:
   fields:
     steam_cookie:
       name: Steam Cookie (steamLoginSecure)
-      description: Value of the steamLoginSecure cookie from your browser. URL-encoded or plain.
+      description: Value of the steamLoginSecure cookie from your browser.
       required: true
       selector:
         text:
           type: password
     import_start_date:
       name: Start date (ISO format)
-      description: "Only import data from this date onwards. Format: YYYY-MM-DD. Leave empty for full history."
+      description: "Only import data from this date onwards. Format: YYYY-MM-DD."
       required: false
       selector:
         text:

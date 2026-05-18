@@ -13,23 +13,40 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def fetch_floats(
-    client: httpx.Client, items: list[dict]
+    client: httpx.Client,
+    items: list[dict],
+    cached: dict[str, float] | None = None,
+    stop=None,
 ) -> dict[str, float]:
-    """Fetch float for items having an inspect_link. Silent on failure."""
+    """Fetch float for items having an inspect_link. Silent on failure.
+
+    ``cached`` maps asset_id → float_value; items already cached are skipped.
+    ``stop`` is a threading.Event for interruptible sleep between requests.
+    """
     if not _api_available(client):
         _LOGGER.info("CSGOFloat unavailable — skipping float values")
         return {}
 
+    cached = cached or {}
     results: dict[str, float] = {}
     for item in items:
+        if stop and stop.is_set():
+            break
         inspect_link = item.get("inspect_link")
         if not inspect_link:
             continue
         name = item.get("market_hash_name", "")
+        asset_id = item.get("asset_id", name)
+        if asset_id in cached:
+            results[name] = cached[asset_id]
+            continue
         val = _fetch_one(client, inspect_link, name)
         if val is not None:
             results[name] = val
-        time.sleep(1)
+        if stop:
+            stop.wait(1.5)
+        else:
+            time.sleep(1.5)
 
     _LOGGER.info("Retrieved %d float values from CSGOFloat", len(results))
     return results

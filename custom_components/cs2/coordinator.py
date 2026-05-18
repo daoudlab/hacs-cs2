@@ -26,6 +26,7 @@ from .const import (
     CONF_MIN_ITEM_VALUE,
     CONF_MAX_ITEMS,
     CONF_INCLUDE_TRADING_CARDS,
+    CONF_FETCH_FLOATS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
@@ -33,13 +34,15 @@ from .const import (
     KNOWN_MARKETABLE_APPS,
     STORAGE_KEY,
     STORAGE_VERSION,
+    WATCHLIST_FILE,
+    TARGETS_FILE,
 )
 from .slugify import make_slug
 
 _LOGGER = logging.getLogger(__name__)
 
-# Re-run discovery after this interval
 _DISCOVERY_INTERVAL = datetime.timedelta(days=7)
+_SNAPSHOT_KEEP_DAYS = 10
 
 
 def _parse_steam_ids(raw: str) -> list[tuple[str, str]]:
@@ -69,6 +72,32 @@ def _load_json_prices(config_dir: str, filename: str) -> dict[str, float]:
         return {}
 
 
+def _load_json_list(config_dir: str, filename: str) -> list[dict]:
+    """Load a JSON list from {config_dir}/{filename} if present."""
+    path = Path(config_dir) / filename
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, list) else []
+    except Exception as err:
+        _LOGGER.warning("Failed to load %s: %s", path, err)
+        return []
+
+
+def _load_json_targets(config_dir: str, filename: str) -> dict[str, dict]:
+    """Load price targets from {config_dir}/{filename} if present."""
+    path = Path(config_dir) / filename
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+    except Exception as err:
+        _LOGGER.warning("Failed to load %s: %s", path, err)
+        return {}
+
+
 class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Fetches Steam inventories + prices for all detected games."""
 
@@ -88,6 +117,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._previous_prices: dict[str, float] = {}
         self._active_apps: list[tuple[int, int, str, str]] = []
         self._last_discovery: datetime.datetime | None = None
+        self._price_snapshots: dict[str, dict[str, float]] = {}
+        self._float_cache: dict[str, float] = {}
+        self._last_cycle_stats: dict[str, Any] = {}
         self._stop = threading.Event()
 
     def stop(self) -> None:
@@ -106,6 +138,14 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     def include_trading_cards(self) -> bool:
         return bool(self._cfg.get(CONF_INCLUDE_TRADING_CARDS, False))
 
+    @property
+    def fetch_floats(self) -> bool:
+        return bool(self._cfg.get(CONF_FETCH_FLOATS, False))
+
+    @property
+    def last_cycle_stats(self) -> dict[str, Any]:
+        return dict(self._last_cycle_stats)
+
     # ── Persistence ───────────────────────────────────────────────────────────
 
     async def _async_load_store(self) -> None:
@@ -119,16 +159,22 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_discovery = (
             datetime.datetime.fromisoformat(last_disc) if last_disc else None
         )
+        self._price_snapshots = data.get("price_snapshots", {})
+        self._float_cache = data.get("float_cache", {})
 
     async def _async_save_store(
         self,
         new_prices: dict[str, float],
         active_apps: list[tuple[int, int, str, str]],
+        price_snapshots: dict[str, dict[str, float]],
+        float_cache: dict[str, float],
     ) -> None:
         self._previous_prices = {**self._current_prices}
         self._current_prices = {**new_prices}
         self._active_apps = active_apps
         self._last_discovery = datetime.datetime.now()
+        self._price_snapshots = price_snapshots
+        self._float_cache = float_cache
         await self._store.async_save(
             {
                 "entity_pictures": self._entity_pictures,
@@ -136,6 +182,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "previous_prices": self._previous_prices,
                 "active_apps": [list(a) for a in active_apps],
                 "last_discovery": self._last_discovery.isoformat(),
+                "price_snapshots": price_snapshots,
+                "float_cache": float_cache,
             }
         )
 
@@ -186,16 +234,74 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "Discovery: found %s (appid=%d, %d items)",
                         game_name, appid, count,
                     )
-                time.sleep(0.5)  # gentle pacing
+                time.sleep(0.5)
 
         result = list(active.values())
         _LOGGER.info("Discovery complete: %d active games", len(result))
         return result
 
+    # ── CSGOFloat ─────────────────────────────────────────────────────────────
+
+    def _fetch_floats_for_game(
+        self, http: httpx.Client, items: list[dict], appid: int
+    ) -> dict[str, float]:
+        """Fetch float values for CS2 skins (appid=730) with inspect links."""
+        if appid != 730 or not self.fetch_floats:
+            return {}
+        from .api.csgofloat import fetch_floats
+        floats = fetch_floats(http, items, cached=self._float_cache, stop=self._stop)
+        # Update persistent cache (asset_id → float)
+        for item in items:
+            name = item.get("market_hash_name", "")
+            asset_id = item.get("asset_id", name)
+            if name in floats:
+                self._float_cache[asset_id] = floats[name]
+        return floats
+
+    # ── Price thresholds ──────────────────────────────────────────────────────
+
+    def _check_price_alerts(
+        self,
+        prices: dict[str, float],
+        targets: dict[str, dict],
+    ) -> None:
+        """Fire HA events when item prices cross configured thresholds."""
+        for name, thresholds in targets.items():
+            price = prices.get(name)
+            if price is None:
+                continue
+            high = thresholds.get("high")
+            low = thresholds.get("low")
+            if high is not None and price >= high:
+                self.hass.loop.call_soon_threadsafe(
+                    self.hass.bus.async_fire,
+                    "steam_price_alert",
+                    {
+                        "market_hash_name": name,
+                        "current_price": price,
+                        "threshold_type": "high",
+                        "threshold_value": high,
+                    },
+                )
+                _LOGGER.info("Price alert HIGH: %s = %.2f >= %.2f", name, price, high)
+            if low is not None and price <= low:
+                self.hass.loop.call_soon_threadsafe(
+                    self.hass.bus.async_fire,
+                    "steam_price_alert",
+                    {
+                        "market_hash_name": name,
+                        "current_price": price,
+                        "threshold_type": "low",
+                        "threshold_value": low,
+                    },
+                )
+                _LOGGER.info("Price alert LOW: %s = %.2f <= %.2f", name, price, low)
+
     # ── Main cycle ────────────────────────────────────────────────────────────
 
     def _sync_cycle(self) -> dict[str, Any]:
         """Synchronous cycle — runs in executor thread."""
+        cycle_start = time.monotonic()
         cfg = self._cfg
         cap = int(cfg.get(CONF_MAX_ITEMS, DEFAULT_MAX_ITEMS))
         strict_ratio = float(cfg.get(CONF_STRICT_MISSING_RATIO, DEFAULT_STRICT_RATIO))
@@ -205,6 +311,16 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         buy_prices = _load_json_prices(config_dir, "cs2_buy_prices.json")
         reference_prices = _load_json_prices(config_dir, "cs2_reference_prices.json")
         tracked_extras = set(buy_prices) | set(reference_prices)
+
+        watchlist = _load_json_list(config_dir, WATCHLIST_FILE)
+        price_targets = _load_json_targets(config_dir, TARGETS_FILE)
+
+        # Compute 24h / 7d reference dates
+        today = datetime.date.today().isoformat()
+        date_24h = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        date_7d = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+        prices_24h = self._price_snapshots.get(date_24h, {})
+        prices_7d = self._price_snapshots.get(date_7d, {})
 
         with httpx.Client() as http:
             # ── Discovery ─────────────────────────────────────────────────────
@@ -222,6 +338,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             all_fresh_prices: dict[str, float] = {}
             total_stale = 0
             total_missing = 0
+            float_cache = dict(self._float_cache)
 
             for appid, contextid, slug, game_name in active_apps:
                 if self._stop.is_set():
@@ -250,8 +367,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                             self._entity_pictures[name] = pic
 
                 inventory = list(merged.values())
-                # Sort by known price descending before capping so max_items
-                # keeps the most valuable items, not random inventory order
                 if cap > 0:
                     inventory.sort(
                         key=lambda i: max(
@@ -262,6 +377,13 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 unique_names = [i["market_hash_name"] for i in inventory]
                 names_to_fetch = unique_names[:cap] if cap > 0 else unique_names
+
+                # ── Fetch floats (CS2 only, opt-in) ───────────────────────────
+                floats = self._fetch_floats_for_game(
+                    http,
+                    [i for i in inventory if i["market_hash_name"] in names_to_fetch],
+                    appid,
+                )
 
                 # ── Fetch prices ───────────────────────────────────────────────
                 prices = steam_market.fetch_prices(
@@ -293,10 +415,12 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 items_data = compute_item_metrics(
                     inventory=[i for i in inventory if i["market_hash_name"] in names_to_fetch],
                     prices=prices,
-                    floats={},
+                    floats=floats,
                     previous_prices=previous_prices,
                     buy_prices=buy_prices,
                     reference_prices=reference_prices,
+                    prices_24h=prices_24h,
+                    prices_7d=prices_7d,
                 )
 
                 for item in items_data:
@@ -305,7 +429,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     item["game_slug"] = slug
                     item["game_name"] = game_name
 
-                # Apply min_value filter
                 if min_val > 0:
                     items_data = [
                         i for i in items_data
@@ -313,7 +436,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         or (i.get("buy_price") or 0) >= min_val
                     ]
 
-                # Skip game if no items pass the threshold
                 if not items_data:
                     _LOGGER.info(
                         "Skipping %s — no items above min_value=%.2f EUR",
@@ -333,25 +455,66 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
                 all_items_flat.extend(items_data)
 
-            # ── Global metrics (flat list of all games' items) ─────────────────
+            # ── Watchlist prices ───────────────────────────────────────────────
+            watchlist_prices: dict[str, float] = {}
+            watchlist_names = [
+                w["market_hash_name"] for w in watchlist
+                if "market_hash_name" in w
+                and w["market_hash_name"] not in all_fresh_prices
+            ]
+            if watchlist_names and not self._stop.is_set():
+                watchlist_prices = steam_market.fetch_prices(
+                    http, watchlist_names,
+                    limits=limits, stop=self._stop, app_id=730,
+                )
+                all_fresh_prices.update(watchlist_prices)
+
+            # ── Price threshold alerts ─────────────────────────────────────────
+            if price_targets:
+                combined_prices = {**all_fresh_prices}
+                self._check_price_alerts(combined_prices, price_targets)
+
+            # ── Global metrics ─────────────────────────────────────────────────
             prev_global = self._previous_total(previous_prices, all_items_flat)
             global_metrics = compute_global_metrics(
                 all_items_flat, previous_total=prev_global
             )
 
+            # ── Price snapshot for today ───────────────────────────────────────
+            snapshots = {**self._price_snapshots, today: dict(all_fresh_prices)}
+            cutoff = (
+                datetime.date.today() - datetime.timedelta(days=_SNAPSHOT_KEEP_DAYS)
+            ).isoformat()
+            snapshots = {k: v for k, v in snapshots.items() if k >= cutoff}
+
+        cycle_duration = round(time.monotonic() - cycle_start, 1)
+
+        self._last_cycle_stats = {
+            "total_value": global_metrics["total_value"],
+            "items_count": global_metrics["items_count"],
+            "active_games": len(per_game_data),
+            "stale_count": total_stale,
+            "missing_count": total_missing,
+            "cycle_duration_s": cycle_duration,
+            "last_update": datetime.datetime.now().isoformat(),
+        }
+
         # Persist state
         self.hass.loop.call_soon_threadsafe(
-            lambda apps=active_apps, prices=all_fresh_prices:
-                self.hass.async_create_task(self._async_save_store(prices, apps))
+            lambda apps=active_apps, prices=all_fresh_prices, snaps=snapshots, fc=float_cache:
+                self.hass.async_create_task(
+                    self._async_save_store(prices, apps, snaps, fc)
+                )
         )
 
         _LOGGER.info(
-            "Steam cycle: total=%.2f EUR, games=%d, items=%d, stale=%d, missing=%d",
+            "Steam cycle: total=%.2f EUR, games=%d, items=%d, stale=%d, missing=%d, %.1fs",
             global_metrics["total_value"],
             len(per_game_data),
             global_metrics["items_count"],
             total_stale,
             total_missing,
+            cycle_duration,
         )
 
         return {
@@ -362,6 +525,18 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "active_apps": active_apps,
             "stale_count": total_stale,
             "missing_count": total_missing,
+            "watchlist": [
+                {
+                    "market_hash_name": w["market_hash_name"],
+                    "appid": w.get("appid", 730),
+                    "current_price": watchlist_prices.get(w["market_hash_name"]),
+                    "target_price": w.get("target_price"),
+                    "note": w.get("note", ""),
+                    "slug": make_slug(w["market_hash_name"]),
+                }
+                for w in watchlist
+                if "market_hash_name" in w
+            ],
         }
 
     @staticmethod
@@ -387,4 +562,5 @@ def _empty_result() -> dict[str, Any]:
         "active_apps": [],
         "stale_count": 0,
         "missing_count": 0,
+        "watchlist": [],
     }

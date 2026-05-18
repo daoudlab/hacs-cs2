@@ -14,6 +14,8 @@ from .const import (
     DEFAULT_MIN_VALUE,
     SERVICE_RUN_IMPORT,
     SERVICE_GENERATE_DASHBOARDS,
+    SERVICE_FORCE_REFRESH,
+    SERVICE_SET_BUY_PRICE,
 )
 from .coordinator import CS2Coordinator
 
@@ -62,6 +64,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=vol.Schema({}),
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_FORCE_REFRESH):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_FORCE_REFRESH,
+            _handle_force_refresh,
+            schema=vol.Schema({}),
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_BUY_PRICE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SET_BUY_PRICE,
+            _handle_set_buy_price,
+            schema=vol.Schema(
+                {
+                    vol.Required("market_hash_name"): str,
+                    vol.Optional("price", default=0.0): vol.Any(float, int, None),
+                }
+            ),
+        )
+
     return True
 
 
@@ -73,8 +96,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if ok:
         hass.data[DOMAIN].pop(entry.entry_id)
     if not hass.data.get(DOMAIN):
-        hass.services.async_remove(DOMAIN, SERVICE_RUN_IMPORT)
-        hass.services.async_remove(DOMAIN, SERVICE_GENERATE_DASHBOARDS)
+        for svc in (SERVICE_RUN_IMPORT, SERVICE_GENERATE_DASHBOARDS,
+                    SERVICE_FORCE_REFRESH, SERVICE_SET_BUY_PRICE):
+            hass.services.async_remove(DOMAIN, svc)
     return ok
 
 
@@ -148,3 +172,39 @@ def _write_dashboards(config_dir: str, data: dict) -> None:
         "cs2.generate_dashboards: wrote %d files to %s: %s",
         len(files), out_dir, ", ".join(files),
     )
+
+
+async def _handle_force_refresh(call) -> None:
+    """Trigger an immediate coordinator refresh."""
+    hass = call.hass
+    for coordinator in hass.data.get(DOMAIN, {}).values():
+        await coordinator.async_request_refresh()
+    _LOGGER.info("cs2.force_refresh: triggered")
+
+
+async def _handle_set_buy_price(call) -> None:
+    """Write or delete a buy price in cs2_buy_prices.json."""
+    import json
+    from pathlib import Path
+    hass = call.hass
+    name = call.data["market_hash_name"].strip()
+    price = call.data.get("price")
+    config_dir = hass.config.config_dir
+    path = Path(config_dir) / "cs2_buy_prices.json"
+
+    def _write() -> None:
+        data: dict = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+            except Exception:
+                pass
+        if price is None or price == 0:
+            data.pop(name, None)
+            _LOGGER.info("cs2.set_buy_price: removed %s", name)
+        else:
+            data[name] = round(float(price), 2)
+            _LOGGER.info("cs2.set_buy_price: set %s = %.2f EUR", name, float(price))
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+
+    await hass.async_add_executor_job(_write)
