@@ -6,7 +6,6 @@ CONF_SCAN_INTERVAL = "scan_interval"
 CONF_STRICT_MISSING_RATIO = "strict_missing_ratio"
 CONF_MIN_ITEM_VALUE = "min_item_value"
 CONF_MAX_ITEMS = "max_items"
-CONF_PATIENT_MODE = "patient_mode"
 
 DEFAULT_SCAN_INTERVAL = 60       # minutes
 DEFAULT_STRICT_RATIO = 0.30
