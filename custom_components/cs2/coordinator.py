@@ -552,26 +552,29 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             else None
         )
 
+        watchlist_data = [
+            {
+                "market_hash_name": w["market_hash_name"],
+                "appid": w.get("appid", 730),
+                "current_price": watchlist_prices.get(w["market_hash_name"]),
+                "target_price": w.get("target_price"),
+                "note": w.get("note", ""),
+                "slug": make_slug(w["market_hash_name"]),
+            }
+            for w in watchlist
+            if "market_hash_name" in w
+        ]
         return {
             "global": global_metrics,
             "per_game": per_game_data,
             "items": all_items_flat,
+            "items_by_slug": {i["slug"]: i for i in all_items_flat},
             "per_account": {},
             "active_apps": active_apps,
             "stale_count": total_stale,
             "missing_count": total_missing,
-            "watchlist": [
-                {
-                    "market_hash_name": w["market_hash_name"],
-                    "appid": w.get("appid", 730),
-                    "current_price": watchlist_prices.get(w["market_hash_name"]),
-                    "target_price": w.get("target_price"),
-                    "note": w.get("note", ""),
-                    "slug": make_slug(w["market_hash_name"]),
-                }
-                for w in watchlist
-                if "market_hash_name" in w
-            ],
+            "watchlist": watchlist_data,
+            "watchlist_by_slug": {w["slug"]: w for w in watchlist_data},
         }, save_payload
 
     @staticmethod

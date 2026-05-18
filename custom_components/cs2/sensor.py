@@ -228,10 +228,7 @@ class SteamItemSensor(_SteamBase):
         self.entity_id = f"{SENSOR_ITEM_PREFIX}{prefix}{slug}"
 
     def _item(self) -> dict:
-        for item in (self.coordinator.data or {}).get("items", []):
-            if item["slug"] == self._slug:
-                return item
-        return {}
+        return (self.coordinator.data or {}).get("items_by_slug", {}).get(self._slug, {})
 
     @property
     def native_value(self) -> float | None:
@@ -322,10 +319,7 @@ class SteamWatchlistSensor(_SteamBase):
         self.entity_id = f"{SENSOR_WATCHLIST_PREFIX}{slug}"
 
     def _watch(self) -> dict:
-        for w in (self.coordinator.data or {}).get("watchlist", []):
-            if w.get("slug") == self._slug:
-                return w
-        return {}
+        return (self.coordinator.data or {}).get("watchlist_by_slug", {}).get(self._slug, {})
 
     @property
     def native_value(self) -> float | None:
