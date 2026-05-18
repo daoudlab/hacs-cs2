@@ -39,6 +39,7 @@ def check_inventory_count(
     steam_id: str,
     app_id: int,
     context_id: int,
+    stop=None,
 ) -> int:
     """Return total_inventory_count for a game, 0 on error / private / empty."""
     url = STEAM_INVENTORY_URL.format(
@@ -50,7 +51,10 @@ def check_inventory_count(
             return 0  # private
         if resp.status_code == 429:
             _LOGGER.debug("Rate limited during discovery for appid=%d, skipping", app_id)
-            time.sleep(10)
+            if stop:
+                stop.wait(5)
+            else:
+                time.sleep(5)
             return 0
         if resp.status_code != 200:
             return 0
@@ -65,6 +69,7 @@ def fetch_inventory(
     steam_id: str,
     app_id: int = _DEFAULT_APP_ID,
     context_id: int = _DEFAULT_CONTEXT_ID,
+    stop=None,
 ) -> list[dict[str, Any]]:
     """Return all marketable items from the public Steam inventory of `steam_id`.
 
@@ -76,6 +81,7 @@ def fetch_inventory(
     """
     items: list[dict[str, Any]] = []
     last_assetid: str | None = None
+    page_429_count = 0
 
     while True:
         url = STEAM_INVENTORY_URL.format(
@@ -94,8 +100,15 @@ def fetch_inventory(
                 f"Steam inventory {steam_id} is private (HTTP 403)"
             )
         if resp.status_code == 429:
-            _LOGGER.warning("Rate limited on inventory, waiting 30s")
-            time.sleep(30)
+            page_429_count += 1
+            if page_429_count >= 3:
+                _LOGGER.warning("Rate limited on inventory %s — aborting after 3 attempts", steam_id)
+                break
+            _LOGGER.warning("Rate limited on inventory, waiting 30s (attempt %d/3)", page_429_count)
+            if stop:
+                stop.wait(30)
+            else:
+                time.sleep(30)
             continue
         if resp.status_code != 200:
             raise InventoryFetchError(

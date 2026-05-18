@@ -87,9 +87,9 @@ REQUEST_DELAY_MIN = 2.5
 REQUEST_DELAY_MAX = 3.5
 REQUESTS_BEFORE_PAUSE = 20
 PAUSE_SECONDS = 15
-MAX_RETRIES = 5
+MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2
-MAX_BACKOFF = 180
+MAX_BACKOFF = 60
 
 # ── Inventory ─────────────────────────────────────────────────────────────────
 INVENTORY_PAGE_DELAY = 2

@@ -178,7 +178,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if slug in active:
                     continue
                 count = steam_inventory.check_inventory_count(
-                    http, steam_id, appid, contextid
+                    http, steam_id, appid, contextid, stop=self._stop
                 )
                 if count > 0:
                     active[slug] = (appid, contextid, slug, game_name)
@@ -231,7 +231,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 merged: dict[str, dict] = {}
                 for steam_id, account_name in self.accounts:
                     raw = steam_inventory.fetch_inventory(
-                        http, steam_id, app_id=appid, context_id=contextid
+                        http, steam_id, app_id=appid, context_id=contextid,
+                        stop=self._stop,
                     )
                     trackable = [
                         item for item in raw
