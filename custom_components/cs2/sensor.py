@@ -30,10 +30,11 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = [CS2TotalSensor(coordinator)]
 
-    for item in coordinator.data.get("items", []):
+    data = coordinator.data or {}
+    for item in data.get("items", []):
         entities.append(CS2ItemSensor(coordinator, item["slug"], item["name"]))
 
-    for account_name in coordinator.data.get("per_account", {}):
+    for account_name in data.get("per_account", {}):
         entities.append(CS2AccountSensor(coordinator, account_name))
 
     async_add_entities(entities)
@@ -44,7 +45,8 @@ async def async_setup_entry(
         known_acct_ids = {e.entity_id for e in entities if isinstance(e, CS2AccountSensor)}
         new: list[SensorEntity] = []
 
-        for item in coordinator.data.get("items", []):
+        _data = coordinator.data or {}
+        for item in _data.get("items", []):
             eid = f"{SENSOR_ITEM_PREFIX}{item['slug']}"
             if eid not in known_item_ids:
                 e = CS2ItemSensor(coordinator, item["slug"], item["name"])
@@ -52,7 +54,7 @@ async def async_setup_entry(
                 known_item_ids.add(eid)
                 new.append(e)
 
-        for account_name in coordinator.data.get("per_account", {}):
+        for account_name in _data.get("per_account", {}):
             eid = f"{SENSOR_ACCOUNT_PREFIX}{account_name.lower()}"
             if eid not in known_acct_ids:
                 e = CS2AccountSensor(coordinator, account_name)
@@ -96,13 +98,13 @@ class CS2TotalSensor(_CS2Base):
 
     @property
     def native_value(self) -> float | None:
-        g = self.coordinator.data.get("global", {})
+        g = (self.coordinator.data or {}).get("global", {})
         v = g.get("total_value")
         return round(v, 2) if v is not None else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        g = self.coordinator.data.get("global", {})
+        g = (self.coordinator.data or {}).get("global", {})
         return {
             "friendly_name": "CS2 Inventory Total",
             "total_net": g.get("total_net"),
@@ -137,7 +139,7 @@ class CS2ItemSensor(_CS2Base):
         self.entity_id = f"{SENSOR_ITEM_PREFIX}{slug}"
 
     def _item(self) -> dict:
-        for item in self.coordinator.data.get("items", []):
+        for item in (self.coordinator.data or {}).get("items", []):
             if item["slug"] == self._slug:
                 return item
         return {}
@@ -184,7 +186,7 @@ class CS2AccountSensor(_CS2Base):
         self.entity_id = f"{SENSOR_ACCOUNT_PREFIX}{account_name.lower()}"
 
     def _metrics(self) -> dict:
-        return self.coordinator.data.get("per_account", {}).get(self._account, {})
+        return (self.coordinator.data or {}).get("per_account", {}).get(self._account, {})
 
     @property
     def native_value(self) -> float | None:
