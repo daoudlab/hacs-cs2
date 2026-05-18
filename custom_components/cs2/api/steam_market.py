@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import httpx
 
 from ..const import (
+    DEFAULT_APP_ID,
     HEADERS,
     MAX_BACKOFF,
     MAX_RETRIES,
@@ -82,6 +83,7 @@ def fetch_prices(
     on_progress=None,
     limits: RateLimits | None = None,
     stop: threading.Event | None = None,
+    app_id: int = DEFAULT_APP_ID,
 ) -> dict[str, float]:
     """Sequentially fetch Steam Market prices with rate limiting."""
     rl = limits or RateLimits()
@@ -92,7 +94,7 @@ def fetch_prices(
     for idx, name in enumerate(names, 1):
         if stop and stop.is_set():
             break
-        price = _fetch_one(client, name, rl, stop=stop)
+        price = _fetch_one(client, name, rl, stop=stop, app_id=app_id)
         if price is not None:
             results[name] = price
         if on_progress:
@@ -119,9 +121,10 @@ def _fetch_one(
     name: str,
     rl: RateLimits,
     stop: threading.Event | None = None,
+    app_id: int = DEFAULT_APP_ID,
 ) -> float | None:
     encoded = urllib.parse.quote(name)
-    url = STEAM_MARKET_PRICE_URL.format(name=encoded)
+    url = STEAM_MARKET_PRICE_URL.format(name=encoded, appid=app_id)
 
     for attempt in range(rl.max_retries):
         if stop and stop.is_set():

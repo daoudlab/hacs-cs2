@@ -11,6 +11,8 @@
       "settings": {
         "title": "CS2 Inventory — Settings",
         "data": {
+          "app_id": "Steam App ID (e.g. 730=CS2, 440=TF2, 570=Dota2)",
+          "context_id": "Inventory context ID (2 = most games)",
           "scan_interval": "Scan interval (minutes)",
           "strict_missing_ratio": "Strict missing ratio (0–1)",
           "min_item_value": "Minimum item value (EUR, 0 = all)",
@@ -37,6 +39,8 @@
         "title": "CS2 Inventory — Options",
         "data": {
           "steam_ids": "Steam IDs",
+          "app_id": "Steam App ID (730=CS2, 440=TF2, 570=Dota2…)",
+          "context_id": "Inventory context ID",
           "scan_interval": "Scan interval (minutes)",
           "strict_missing_ratio": "Strict missing ratio",
           "min_item_value": "Minimum item value (EUR)",

@@ -1,7 +1,8 @@
 """Steam inventory client — public profile, no cookie required.
 
-Ported from the HACS integration (aiohttp+async → httpx+sync) since the
-systemd service is a oneshot and doesn't benefit from asyncio.
+Uses the generic Steam inventory API (game-agnostic). Items with
+``marketable: 1`` in the Steam API response are tracked — this is the
+authoritative flag for items tradeable on the Steam Community Market.
 """
 from __future__ import annotations
 
@@ -13,6 +14,8 @@ from typing import Any
 import httpx
 
 from ..const import (
+    DEFAULT_APP_ID,
+    DEFAULT_CONTEXT_ID,
     HEADERS,
     INVENTORY_PAGE_DELAY,
     STEAM_INVENTORY_URL,
@@ -20,24 +23,6 @@ from ..const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# Item types that can appear on the Steam Market with an active listing.
-# Collectibles (medals/coins), Tools, and WeaponCase are never tradeable
-# as individual price sensors and are excluded.
-_MARKETABLE_TYPES = {
-    "CSGO_Type_Pistol",
-    "CSGO_Type_SMG",
-    "CSGO_Type_Rifle",
-    "CSGO_Type_SniperRifle",
-    "CSGO_Type_Shotgun",
-    "CSGO_Type_Machinegun",
-    "CSGO_Type_Knife",
-    "CSGO_Type_Gloves",
-    "CSGO_Type_Equipment",   # Zeus x27 and similar
-    "CSGO_Type_MusicKit",    # StatTrak / standard music kits
-    "Type_CustomPlayer",     # Agent skins
-    # CSGO_Type_Spray handled separately below — only sealed graffiti are listed
-}
 
 
 class InventoryPrivateError(Exception):
@@ -48,18 +33,27 @@ class InventoryFetchError(Exception):
     """Transient or hard failure fetching the inventory."""
 
 
-def fetch_inventory(client: httpx.Client, steam_id: str) -> list[dict[str, Any]]:
-    """Return all CS2 items from the public Steam inventory of `steam_id`.
+def fetch_inventory(
+    client: httpx.Client,
+    steam_id: str,
+    app_id: int = DEFAULT_APP_ID,
+    context_id: int = DEFAULT_CONTEXT_ID,
+) -> list[dict[str, Any]]:
+    """Return all marketable items from the public Steam inventory of `steam_id`.
 
-    Each item:
-      market_hash_name, name_color (rarity hex), inspect_link, asset_id,
-      classid, instanceid, is_skin
+    Works for any Steam game — CS2 (730), TF2 (440), Dota 2 (570), etc.
+
+    Each item dict contains:
+      market_hash_name, name_color, inspect_link, entity_picture,
+      asset_id, classid, instanceid, marketable (bool)
     """
     items: list[dict[str, Any]] = []
     last_assetid: str | None = None
 
     while True:
-        url = STEAM_INVENTORY_URL.format(steam_id=steam_id)
+        url = STEAM_INVENTORY_URL.format(
+            steam_id=steam_id, appid=app_id, contextid=context_id
+        )
         if last_assetid:
             url += f"&start_assetid={last_assetid}"
 
@@ -98,10 +92,13 @@ def fetch_inventory(client: httpx.Client, steam_id: str) -> list[dict[str, Any]]
             if not name:
                 continue
 
+            # Only track items tradeable on the Steam Community Market
+            marketable = bool(desc.get("marketable", 0))
+
             inspect_link: str | None = None
             for action in desc.get("actions", []):
                 link = action.get("link", "")
-                if "csgo_econ_action_preview" in link or "csgo" in link.lower():
+                if link:
                     inspect_link = (
                         link.replace("%owner_steamid%", steam_id)
                         .replace("%assetid%", asset.get("assetid", ""))
@@ -117,17 +114,6 @@ def fetch_inventory(client: httpx.Client, steam_id: str) -> list[dict[str, Any]]
                 if icon_raw else None
             )
 
-            item_type = next(
-                (t.get("internal_name", "") for t in desc.get("tags", [])
-                 if t.get("category") == "Type"),
-                "",
-            )
-            # Applied graffiti ("Graffiti | ...") have no active Steam Market
-            # listings — only sealed ones ("Sealed Graffiti | ...") do.
-            is_skin = item_type in _MARKETABLE_TYPES or (
-                item_type == "CSGO_Type_Spray" and name.startswith("Sealed Graffiti |")
-            )
-
             items.append(
                 {
                     "market_hash_name": name,
@@ -137,7 +123,8 @@ def fetch_inventory(client: httpx.Client, steam_id: str) -> list[dict[str, Any]]
                     "asset_id": asset.get("assetid", ""),
                     "classid": asset.get("classid", ""),
                     "instanceid": asset.get("instanceid", ""),
-                    "is_skin": is_skin,
+                    "marketable": marketable,
+                    "is_skin": marketable,  # kept for backward-compat with coordinator
                 }
             )
 
@@ -148,7 +135,9 @@ def fetch_inventory(client: httpx.Client, steam_id: str) -> list[dict[str, Any]]
         _LOGGER.debug("Inventory pagination: next after %s", last_assetid)
         time.sleep(INVENTORY_PAGE_DELAY)
 
-    _LOGGER.info("Fetched %d items from inventory %s", len(items), steam_id)
+    _LOGGER.info(
+        "Fetched %d items from inventory %s (appid=%d)", len(items), steam_id, app_id
+    )
     return items
 
 

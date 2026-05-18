@@ -6,11 +6,15 @@ CONF_SCAN_INTERVAL = "scan_interval"
 CONF_STRICT_MISSING_RATIO = "strict_missing_ratio"
 CONF_MIN_ITEM_VALUE = "min_item_value"
 CONF_MAX_ITEMS = "max_items"
+CONF_APP_ID = "app_id"
+CONF_CONTEXT_ID = "context_id"
 
 DEFAULT_SCAN_INTERVAL = 60       # minutes
 DEFAULT_STRICT_RATIO = 0.30
 DEFAULT_MIN_VALUE = 0.0
 DEFAULT_MAX_ITEMS = 0            # 0 = no cap
+DEFAULT_APP_ID = 730             # CS2
+DEFAULT_CONTEXT_ID = 2           # most Steam games use context 2
 
 SENSOR_TOTAL_ID = "sensor.cs2_inventory_total"
 SENSOR_ITEM_PREFIX = "sensor.cs2_item_"
@@ -33,11 +37,11 @@ SERVICE_RUN_IMPORT = "run_import"
 
 # ── Steam API URLs ─────────────────────────────────────────────────────────────
 STEAM_INVENTORY_URL = (
-    "https://steamcommunity.com/inventory/{steam_id}/730/2?l=english&count=500"
+    "https://steamcommunity.com/inventory/{steam_id}/{appid}/{contextid}?l=english&count=500"
 )
 STEAM_MARKET_PRICE_URL = (
     "https://steamcommunity.com/market/priceoverview/"
-    "?appid=730&currency=3&market_hash_name={name}"
+    "?appid={appid}&currency=3&market_hash_name={name}"
 )
 STEAM_PROFILE_XML_URL = "https://steamcommunity.com/profiles/{steam_id}/?xml=1"
 

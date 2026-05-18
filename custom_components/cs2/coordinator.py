@@ -24,10 +24,14 @@ from .const import (
     CONF_STRICT_MISSING_RATIO,
     CONF_MIN_ITEM_VALUE,
     CONF_MAX_ITEMS,
+    CONF_APP_ID,
+    CONF_CONTEXT_ID,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
+    DEFAULT_APP_ID,
+    DEFAULT_CONTEXT_ID,
     STORAGE_KEY,
     STORAGE_VERSION,
 )
@@ -91,6 +95,14 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         return _parse_steam_ids(self._cfg.get(CONF_STEAM_IDS, ""))
 
     @property
+    def app_id(self) -> int:
+        return int(self._cfg.get(CONF_APP_ID, DEFAULT_APP_ID))
+
+    @property
+    def context_id(self) -> int:
+        return int(self._cfg.get(CONF_CONTEXT_ID, DEFAULT_CONTEXT_ID))
+
+    @property
     def min_item_value(self) -> float:
         return float(self._cfg.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE))
 
@@ -143,7 +155,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             # ── Fetch inventories ──────────────────────────────────────────────
             per_account: dict[str, list[dict]] = {}
             for steam_id, account_name in self.accounts:
-                raw = steam_inventory.fetch_inventory(http, steam_id)
+                raw = steam_inventory.fetch_inventory(
+                    http, steam_id, app_id=self.app_id, context_id=self.context_id
+                )
                 trackable = [
                     item for item in raw
                     if item.get("is_skin") or item["market_hash_name"] in tracked_extras
@@ -174,7 +188,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # ── Fetch market prices ────────────────────────────────────────────
             limits = RateLimits()
-            prices = steam_market.fetch_prices(http, names_to_fetch, limits=limits, stop=self._stop)
+            prices = steam_market.fetch_prices(
+                http, names_to_fetch, limits=limits, stop=self._stop, app_id=self.app_id
+            )
             missing = [n for n in names_to_fetch if n not in prices]
 
             # Stale fallback

@@ -17,10 +17,14 @@ from .const import (
     CONF_STRICT_MISSING_RATIO,
     CONF_MIN_ITEM_VALUE,
     CONF_MAX_ITEMS,
+    CONF_APP_ID,
+    CONF_CONTEXT_ID,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
+    DEFAULT_APP_ID,
+    DEFAULT_CONTEXT_ID,
     CONF_IMPORT_START_DATE,
     CONF_STEAM_COOKIE,
     CONF_FORGET_COOKIE,
@@ -71,6 +75,12 @@ STEP_ACCOUNTS_SCHEMA = vol.Schema(
 
 STEP_SETTINGS_SCHEMA = vol.Schema(
     {
+        vol.Optional(CONF_APP_ID, default=DEFAULT_APP_ID): vol.All(
+            int, vol.Range(min=1)
+        ),
+        vol.Optional(CONF_CONTEXT_ID, default=DEFAULT_CONTEXT_ID): vol.All(
+            int, vol.Range(min=1, max=6)
+        ),
         vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
             int, vol.Range(min=5, max=1440)
         ),
@@ -182,6 +192,14 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Required(CONF_STEAM_IDS, default=current.get(CONF_STEAM_IDS, "")): str,
+                vol.Optional(
+                    CONF_APP_ID,
+                    default=current.get(CONF_APP_ID, DEFAULT_APP_ID),
+                ): vol.All(int, vol.Range(min=1)),
+                vol.Optional(
+                    CONF_CONTEXT_ID,
+                    default=current.get(CONF_CONTEXT_ID, DEFAULT_CONTEXT_ID),
+                ): vol.All(int, vol.Range(min=1, max=6)),
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
