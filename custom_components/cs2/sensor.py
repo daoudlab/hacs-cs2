@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -14,8 +13,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
-
 from .const import (
     DOMAIN,
     SENSOR_TOTAL_ID,
@@ -112,8 +109,8 @@ class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
         super().__init__(coordinator)
 
     @property
-    def _last_updated(self) -> str:
-        return dt_util.now().isoformat()
+    def _last_updated(self) -> str | None:
+        return self.coordinator.last_cycle_stats.get("last_update")
 
 
 # ── Global total sensor ───────────────────────────────────────────────────────
@@ -182,8 +179,8 @@ class SteamGameSensor(_SteamBase):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        m = self._game().get("metrics", {})
         game = self._game()
+        m = game.get("metrics", {})
         return {
             "friendly_name": f"Steam {self._game_name} Total",
             "game_name": self._game_name,
