@@ -72,10 +72,10 @@ STEP_SETTINGS_SCHEMA = vol.Schema(
             int, vol.Range(min=5, max=1440)
         ),
         vol.Optional(CONF_STRICT_MISSING_RATIO, default=DEFAULT_STRICT_RATIO): vol.All(
-            _coerce_float, vol.Range(min=0.0, max=1.0)
+            float, vol.Range(min=0.0, max=1.0)
         ),
         vol.Optional(CONF_MIN_ITEM_VALUE, default=DEFAULT_MIN_VALUE): vol.All(
-            _coerce_float, vol.Range(min=0.0)
+            float, vol.Range(min=0.0)
         ),
         vol.Optional(CONF_MAX_ITEMS, default=DEFAULT_MAX_ITEMS): vol.All(
             int, vol.Range(min=0)
@@ -153,11 +153,11 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_STRICT_MISSING_RATIO,
                     default=current.get(CONF_STRICT_MISSING_RATIO, DEFAULT_STRICT_RATIO),
-                ): vol.All(_coerce_float, vol.Range(min=0.0, max=1.0)),
+                ): vol.All(float, vol.Range(min=0.0, max=1.0)),
                 vol.Optional(
                     CONF_MIN_ITEM_VALUE,
                     default=current.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE),
-                ): vol.All(_coerce_float, vol.Range(min=0.0)),
+                ): vol.All(float, vol.Range(min=0.0)),
                 vol.Optional(
                     CONF_MAX_ITEMS,
                     default=current.get(CONF_MAX_ITEMS, DEFAULT_MAX_ITEMS),
