@@ -120,6 +120,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._price_snapshots: dict[str, dict[str, float]] = {}
         self._float_cache: dict[str, float] = {}
         self._last_cycle_stats: dict[str, Any] = {}
+        self._alert_state: dict[str, str] = {}  # name → "high" | "low" | "none"
         self._stop = threading.Event()
 
     def stop(self) -> None:
@@ -193,7 +194,10 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._stop.clear()
         await self._async_load_store()
         try:
-            return await self.hass.async_add_executor_job(self._sync_cycle)
+            result, save_payload = await self.hass.async_add_executor_job(self._sync_cycle)
+            if save_payload:
+                await self._async_save_store(*save_payload)
+            return result
         except steam_inventory.InventoryPrivateError as err:
             raise UpdateFailed(f"Steam inventory private: {err}") from err
         except steam_inventory.InventoryFetchError as err:
@@ -269,42 +273,48 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         prices: dict[str, float],
         targets: dict[str, dict],
     ) -> None:
-        """Fire HA events when item prices cross configured thresholds."""
+        """Fire HA events on price threshold state transitions (debounced)."""
         for name, thresholds in targets.items():
             price = prices.get(name)
             if price is None:
                 continue
             high = thresholds.get("high")
             low = thresholds.get("low")
+
+            new_state = "none"
             if high is not None and price >= high:
-                self.hass.loop.call_soon_threadsafe(
-                    self.hass.bus.async_fire,
-                    "steam_price_alert",
-                    {
-                        "market_hash_name": name,
-                        "current_price": price,
-                        "threshold_type": "high",
-                        "threshold_value": high,
-                    },
-                )
-                _LOGGER.info("Price alert HIGH: %s = %.2f >= %.2f", name, price, high)
-            if low is not None and price <= low:
-                self.hass.loop.call_soon_threadsafe(
-                    self.hass.bus.async_fire,
-                    "steam_price_alert",
-                    {
-                        "market_hash_name": name,
-                        "current_price": price,
-                        "threshold_type": "low",
-                        "threshold_value": low,
-                    },
-                )
-                _LOGGER.info("Price alert LOW: %s = %.2f <= %.2f", name, price, low)
+                new_state = "high"
+            elif low is not None and price <= low:
+                new_state = "low"
+
+            prev_state = self._alert_state.get(name, "none")
+            if new_state == prev_state:
+                continue  # no transition — skip to avoid spam
+
+            self._alert_state[name] = new_state
+            if new_state == "none":
+                continue  # price returned to normal range — no event fired
+
+            threshold_value = high if new_state == "high" else low
+            self.hass.loop.call_soon_threadsafe(
+                self.hass.bus.async_fire,
+                "steam_price_alert",
+                {
+                    "market_hash_name": name,
+                    "current_price": price,
+                    "threshold_type": new_state,
+                    "threshold_value": threshold_value,
+                },
+            )
+            _LOGGER.info(
+                "Price alert %s: %s = %.2f (threshold %.2f)",
+                new_state.upper(), name, price, threshold_value,
+            )
 
     # ── Main cycle ────────────────────────────────────────────────────────────
 
-    def _sync_cycle(self) -> dict[str, Any]:
-        """Synchronous cycle — runs in executor thread."""
+    def _sync_cycle(self) -> tuple[dict[str, Any], tuple | None]:
+        """Synchronous cycle — runs in executor thread. Returns (result, save_payload)."""
         cycle_start = time.monotonic()
         cfg = self._cfg
         cap = int(cfg.get(CONF_MAX_ITEMS, DEFAULT_MAX_ITEMS))
@@ -333,7 +343,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 active_apps = self._discover_active_apps(http)
 
             if not active_apps:
-                return _empty_result()
+                return _empty_result(), None
 
             previous_prices = dict(self._previous_prices)
             limits = RateLimits.coordinator()
@@ -518,15 +528,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_update": datetime.datetime.now().isoformat(),
         }
 
-        # Only persist when we have actual fresh data — skip empty cycles (IP ban) to preserve price history
-        if all_fresh_prices or all_items_flat:
-            self.hass.loop.call_soon_threadsafe(
-                lambda apps=active_apps, prices=all_fresh_prices, snaps=snapshots, fc=float_cache:
-                    self.hass.async_create_task(
-                        self._async_save_store(prices, apps, snaps, fc)
-                    )
-            )
-
         _LOGGER.info(
             "Steam cycle: total=%.2f EUR, games=%d, items=%d, stale=%d, missing=%d, %.1fs",
             global_metrics["total_value"],
@@ -535,6 +536,13 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             total_stale,
             total_missing,
             cycle_duration,
+        )
+
+        # Only persist when we have actual fresh data — skip empty cycles (IP ban) to preserve price history
+        save_payload = (
+            (all_fresh_prices, active_apps, snapshots, float_cache)
+            if all_fresh_prices or all_items_flat
+            else None
         )
 
         return {
@@ -557,7 +565,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for w in watchlist
                 if "market_hash_name" in w
             ],
-        }
+        }, save_payload
 
     @staticmethod
     def _previous_total(previous_prices: dict, items_data: list[dict]) -> float | None:

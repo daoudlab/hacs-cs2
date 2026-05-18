@@ -211,6 +211,11 @@ class SteamGameSensor(_SteamBase):
 class SteamItemSensor(_SteamBase):
     """One sensor per unique item — sensor.steam_item_{game_slug}_{slug}."""
 
+    # Spot market price: current reading, not cumulative → MEASUREMENT
+    # Remove MONETARY device_class (requires TOTAL state_class) to allow MEASUREMENT
+    _attr_device_class = None
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
     def __init__(self, coordinator: CS2Coordinator, slug: str, market_name: str, game_slug: str = "") -> None:
         super().__init__(coordinator)
         self._slug = slug
@@ -301,6 +306,10 @@ class SteamSyncSensor(_SteamBase):
 
 class SteamWatchlistSensor(_SteamBase):
     """Tracks price of a non-owned item — sensor.steam_watch_{slug}."""
+
+    # Same reasoning as SteamItemSensor — spot price, not cumulative
+    _attr_device_class = None
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: CS2Coordinator, slug: str, market_name: str) -> None:
         super().__init__(coordinator)

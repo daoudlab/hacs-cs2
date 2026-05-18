@@ -25,7 +25,6 @@ from .const import (
     DEFAULT_MAX_ITEMS,
     CONF_IMPORT_START_DATE,
     CONF_STEAM_COOKIE,
-    CONF_FORGET_COOKIE,
     STEAM_INVENTORY_URL,
 )
 
@@ -111,6 +110,9 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     _data: dict[str, Any] = {}
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+        if self._async_current_entries():
+            return self.async_abort(reason="already_configured")
+
         errors: dict[str, str] = {}
         description_placeholders: dict[str, str] = {
             "example": "76561190000000001:main,76561190000000002:alt",
@@ -160,10 +162,10 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             cookie = (user_input.get(CONF_STEAM_COOKIE) or "").strip()
             start_date = (user_input.get(CONF_IMPORT_START_DATE) or "").strip()
-            forget = user_input.get(CONF_FORGET_COOKIE, True)
 
             self._data[CONF_IMPORT_START_DATE] = start_date
-            self._data[CONF_FORGET_COOKIE] = forget
+            # Embed flow_id so async_setup_entry can match the pending import correctly
+            self._data["_setup_flow_id"] = self.flow_id
 
             accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
             title = " + ".join(name for _, name in accounts)
@@ -179,7 +181,6 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Optional(CONF_IMPORT_START_DATE, default=""): str,
                 vol.Optional(CONF_STEAM_COOKIE, default=""): str,
-                vol.Optional(CONF_FORGET_COOKIE, default=True): bool,
             }
         )
         return self.async_show_form(

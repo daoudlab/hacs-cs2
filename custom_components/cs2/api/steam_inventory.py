@@ -175,7 +175,14 @@ def fetch_inventory(
         if not data.get("more_items"):
             break
 
-        last_assetid = data.get("last_assetid")
+        new_assetid = data.get("last_assetid")
+        if not new_assetid or new_assetid == last_assetid:
+            _LOGGER.warning("Inventory pagination stalled (assetid=%s) — stopping", new_assetid)
+            break
+        if len(items) >= 50000:
+            _LOGGER.warning("Inventory hard cap reached (50000 items) for %s — stopping", steam_id)
+            break
+        last_assetid = new_assetid
         _LOGGER.debug("Inventory pagination: next after %s", last_assetid)
         time.sleep(INVENTORY_PAGE_DELAY)
 

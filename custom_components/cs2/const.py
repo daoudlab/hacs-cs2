@@ -24,7 +24,6 @@ STORAGE_KEY = "cs2_inventory_state"
 # ── Phase 2 — historical import ───────────────────────────────────────────────
 CONF_IMPORT_START_DATE = "import_start_date"
 CONF_STEAM_COOKIE = "steam_cookie"
-CONF_FORGET_COOKIE = "forget_cookie"
 
 STEAM_HISTORY_URL = (
     "https://steamcommunity.com/market/pricehistory/"

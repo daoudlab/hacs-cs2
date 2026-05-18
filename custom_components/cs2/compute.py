@@ -112,13 +112,16 @@ def compute_global_metrics(
         for item in items_data
         if item["current_price"] is not None
     )
-    total_buy = sum(
-        item["buy_price"] * item.get("quantity", 1)
-        for item in items_data
-        if item["buy_price"] is not None and item["buy_price"] > 0
+    # P&L: only sum items where we know the cost basis, so value and buy are comparable
+    pl_items = [i for i in items_data if i.get("buy_price") and i["buy_price"] > 0]
+    total_buy = sum(i["buy_price"] * i.get("quantity", 1) for i in pl_items)
+    total_value_pl = sum(
+        i["current_price"] * i.get("quantity", 1)
+        for i in pl_items
+        if i["current_price"] is not None
     )
 
-    profit_brut = round(total_value - total_buy, 2) if total_buy > 0 else None
+    profit_brut = round(total_value_pl - total_buy, 2) if total_buy > 0 else None
     profit_net = round(profit_brut * STEAM_TAX, 2) if profit_brut is not None else None
     total_net = round(total_value * STEAM_TAX, 2)
     roi_global = (

@@ -33,9 +33,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.async_create_task(coordinator.async_request_refresh())
 
     # Check if a pending import was queued from the config flow (cookie transport).
-    # The config flow stores it under flow_id (not entry_id), so pop the first item.
+    # Match by flow_id embedded in entry.data to avoid cross-entry races.
+    flow_id = entry.data.get("_setup_flow_id")
     pending_store = hass.data.get("cs2_pending_import", {})
-    pending = pending_store.pop(next(iter(pending_store), None), None)
+    pending = pending_store.pop(flow_id, None) if flow_id else None
     if pending and pending.get("cookie"):
         hass.async_create_task(
             _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"))
