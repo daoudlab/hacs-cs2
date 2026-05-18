@@ -40,8 +40,12 @@ def fetch_item_history(
         resp = http.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
+    except httpx.HTTPStatusError as err:
+        # Log only status code — full httpx exception repr may include Cookie header
+        _LOGGER.warning("pricehistory fetch failed for %s: HTTP %d", market_hash_name, err.response.status_code)
+        return {}
     except Exception as err:
-        _LOGGER.warning("pricehistory fetch failed for %s: %s", market_hash_name, err)
+        _LOGGER.warning("pricehistory fetch failed for %s: %s", market_hash_name, type(err).__name__)
         return {}
 
     if not data.get("success"):

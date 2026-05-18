@@ -30,13 +30,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Fetch data in background — Steam API takes 2+ min, don't block config flow
     hass.async_create_task(coordinator.async_request_refresh())
 
-    # Check if a pending import was queued from the config flow (cookie transport)
-    pending = hass.data.get("cs2_pending_import", {}).pop(
-        entry.entry_id, None
-    ) or hass.data.get("cs2_pending_import", {}).pop(
-        next((k for k in hass.data.get("cs2_pending_import", {})), None),
-        None,
-    )
+    # Check if a pending import was queued from the config flow (cookie transport).
+    # The config flow stores it under flow_id (not entry_id), so pop the first item.
+    pending_store = hass.data.get("cs2_pending_import", {})
+    pending = pending_store.pop(next(iter(pending_store), None), None)
     if pending and pending.get("cookie"):
         hass.async_create_task(
             _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"))
