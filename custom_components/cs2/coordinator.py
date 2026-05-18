@@ -596,9 +596,11 @@ def _empty_result() -> dict[str, Any]:
         "global": compute_global_metrics([], previous_total=None),
         "per_game": {},
         "items": [],
+        "items_by_slug": {},
         "per_account": {},
         "active_apps": [],
         "stale_count": 0,
         "missing_count": 0,
         "watchlist": [],
+        "watchlist_by_slug": {},
     }
