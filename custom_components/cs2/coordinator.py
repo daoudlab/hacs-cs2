@@ -377,10 +377,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                             self._entity_pictures[name] = pic
 
                 if accounts_ok == 0 and self.accounts:
-                    # All accounts failed — propagate so coordinator can return stale data
-                    raise steam_inventory.InventoryFetchError(
-                        f"All {len(self.accounts)} accounts failed inventory fetch for {game_name}"
-                    )
+                    _LOGGER.warning("All %d accounts failed inventory for %s — skipping", len(self.accounts), game_name)
+                    continue
 
                 inventory = list(merged.values())
                 if cap > 0:
@@ -471,6 +469,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
                 all_items_flat.extend(items_data)
 
+            # If all games were skipped (IP ban), preserve last known coordinator state
+            if not all_items_flat and active_apps and not self._stop.is_set():
+                _LOGGER.warning("All %d active games skipped this cycle (IP ban?) — will use stale coordinator data", len(active_apps))
+                raise steam_inventory.InventoryFetchError("All games skipped — using stale coordinator data")
+
             # ── Watchlist prices ───────────────────────────────────────────────
             watchlist_prices: dict[str, float] = {}
             watchlist_names = [
@@ -515,13 +518,14 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_update": datetime.datetime.now().isoformat(),
         }
 
-        # Persist state
-        self.hass.loop.call_soon_threadsafe(
-            lambda apps=active_apps, prices=all_fresh_prices, snaps=snapshots, fc=float_cache:
-                self.hass.async_create_task(
-                    self._async_save_store(prices, apps, snaps, fc)
-                )
-        )
+        # Only persist when we have actual fresh data — skip empty cycles (IP ban) to preserve price history
+        if all_fresh_prices or all_items_flat:
+            self.hass.loop.call_soon_threadsafe(
+                lambda apps=active_apps, prices=all_fresh_prices, snaps=snapshots, fc=float_cache:
+                    self.hass.async_create_task(
+                        self._async_save_store(prices, apps, snaps, fc)
+                    )
+            )
 
         _LOGGER.info(
             "Steam cycle: total=%.2f EUR, games=%d, items=%d, stale=%d, missing=%d, %.1fs",
