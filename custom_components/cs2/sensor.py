@@ -98,6 +98,7 @@ class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:steam"
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
@@ -119,14 +120,10 @@ class SteamTotalSensor(_SteamBase):
     """Global portfolio total across all games — sensor.steam_inventory_total."""
 
     _attr_unique_id = "steam_inventory_total"
-    _attr_name = "Steam Inventory Total"
+    _attr_name = "Total"
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
-
-    @property
-    def suggested_object_id(self) -> str:
-        return "steam_inventory_total"
 
     @property
     def native_value(self) -> float | None:
@@ -167,11 +164,7 @@ class SteamGameSensor(_SteamBase):
         self._slug = slug
         self._game_name = game_name
         self._attr_unique_id = f"steam_game_{slug}_total"
-        self._attr_name = f"Steam {game_name} Total"
-
-    @property
-    def suggested_object_id(self) -> str:
-        return f"steam_{self._slug}_total"
+        self._attr_name = f"{game_name} Total"
 
     def _game(self) -> dict:
         return (self.coordinator.data or {}).get("per_game", {}).get(self._slug, {})
@@ -228,10 +221,6 @@ class SteamItemSensor(_SteamBase):
         self._attr_unique_id = f"steam_item_{prefix}{slug}"
         self._attr_name = market_name
 
-    @property
-    def suggested_object_id(self) -> str:
-        return f"steam_item_{self._prefix}{self._slug}"
-
     def _item(self) -> dict:
         key = f"{self._game_slug}__{self._slug}" if self._game_slug else self._slug
         return (self.coordinator.data or {}).get("items_by_slug", {}).get(key, {})
@@ -274,7 +263,7 @@ class SteamSyncSensor(_SteamBase):
     """Integration health sensor — sensor.steam_sync_status."""
 
     _attr_unique_id = "steam_sync_status"
-    _attr_name = "Steam Sync Status"
+    _attr_name = "Sync Status"
     _attr_icon = "mdi:sync"
     _attr_device_class = None
     _attr_state_class = None
@@ -282,10 +271,6 @@ class SteamSyncSensor(_SteamBase):
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
-
-    @property
-    def suggested_object_id(self) -> str:
-        return "steam_sync_status"
 
     @property
     def native_value(self) -> str:
@@ -325,12 +310,8 @@ class SteamWatchlistSensor(_SteamBase):
         self._slug = slug
         self._market_name = market_name
         self._attr_unique_id = f"steam_watch_{slug}"
-        self._attr_name = f"Watch: {market_name[:40]}"
+        self._attr_name = market_name[:50]
         self._attr_icon = "mdi:eye"
-
-    @property
-    def suggested_object_id(self) -> str:
-        return f"steam_watch_{self._slug}"
 
     def _watch(self) -> dict:
         return (self.coordinator.data or {}).get("watchlist_by_slug", {}).get(self._slug, {})
