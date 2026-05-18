@@ -19,6 +19,18 @@ SENSOR_ACCOUNT_PREFIX = "sensor.cs2_inventory_total_"
 STORAGE_VERSION = 1
 STORAGE_KEY = "cs2_inventory_state"
 
+# ── Phase 2 — historical import ───────────────────────────────────────────────
+CONF_IMPORT_START_DATE = "import_start_date"
+CONF_STEAM_COOKIE = "steam_cookie"
+CONF_FORGET_COOKIE = "forget_cookie"
+
+STEAM_HISTORY_URL = (
+    "https://steamcommunity.com/market/pricehistory/"
+    "?appid=730&currency=3&market_hash_name={name}"
+)
+
+SERVICE_RUN_IMPORT = "run_import"
+
 # ── Steam API URLs ─────────────────────────────────────────────────────────────
 STEAM_INVENTORY_URL = (
     "https://steamcommunity.com/inventory/{steam_id}/730/2?l=english&count=500"

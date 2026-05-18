@@ -21,6 +21,9 @@ from .const import (
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
+    CONF_IMPORT_START_DATE,
+    CONF_STEAM_COOKIE,
+    CONF_FORGET_COOKIE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,13 +115,46 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_settings(self, user_input: dict | None = None) -> FlowResult:
         if user_input is not None:
             self._data.update(user_input)
-            accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
-            title = " + ".join(name for _, name in accounts)
-            return self.async_create_entry(title=title, data=self._data)
+            return await self.async_step_import()
 
         return self.async_show_form(
             step_id="settings",
             data_schema=STEP_SETTINGS_SCHEMA,
+        )
+
+    async def async_step_import(self, user_input: dict | None = None) -> FlowResult:
+        """Step 3 — optional historical import (cookie + start date)."""
+        if user_input is not None:
+            cookie = (user_input.get(CONF_STEAM_COOKIE) or "").strip()
+            start_date = (user_input.get(CONF_IMPORT_START_DATE) or "").strip()
+            forget = user_input.get(CONF_FORGET_COOKIE, True)
+
+            # Store import config in entry data (cookie excluded — passed via hass.data)
+            self._data[CONF_IMPORT_START_DATE] = start_date
+            self._data[CONF_FORGET_COOKIE] = forget
+
+            accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
+            title = " + ".join(name for _, name in accounts)
+
+            # Pass cookie via hass.data (never stored in config entry)
+            if cookie:
+                self.hass.data.setdefault("cs2_pending_import", {})[
+                    self.flow_id
+                ] = {"cookie": cookie, "start_date": start_date}
+
+            return self.async_create_entry(title=title, data=self._data)
+
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_IMPORT_START_DATE, default=""): str,
+                vol.Optional(CONF_STEAM_COOKIE, default=""): str,
+                vol.Optional(CONF_FORGET_COOKIE, default=True): bool,
+            }
+        )
+        return self.async_show_form(
+            step_id="import",
+            data_schema=schema,
+            description_placeholders={"note": "Laissez le cookie vide pour ignorer l'import historique."},
         )
 
     @staticmethod

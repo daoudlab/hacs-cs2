@@ -16,6 +16,15 @@
           "min_item_value": "Minimum item value (EUR, 0 = all)",
           "max_items": "Maximum items (0 = no limit)"
         }
+      },
+      "import": {
+        "title": "CS2 Inventory — Historical Import (optional)",
+        "description": "{note}",
+        "data": {
+          "import_start_date": "Import start date (YYYY-MM-DD, empty = full history)",
+          "steam_cookie": "Steam cookie (steamLoginSecure)",
+          "forget_cookie": "Forget cookie after import"
+        }
       }
     },
     "error": {

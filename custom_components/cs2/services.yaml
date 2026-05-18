@@ -1,0 +1,32 @@
+run_import:
+  name: Run Historical Import
+  description: >
+    Import historical CS2 price data into HA long-term statistics.
+    Requires a valid Steam session cookie (steamLoginSecure).
+    The cookie is used only for fetching data and is never stored.
+  fields:
+    steam_cookie:
+      name: Steam Cookie (steamLoginSecure)
+      description: Value of the steamLoginSecure cookie from your browser. URL-encoded or plain.
+      required: true
+      selector:
+        text:
+          type: password
+    import_start_date:
+      name: Start date (ISO format)
+      description: "Only import data from this date onwards. Format: YYYY-MM-DD. Leave empty for full history."
+      required: false
+      selector:
+        text:
+    min_item_value:
+      name: Minimum item value (EUR)
+      description: Skip items worth less than this amount. 0 = import all.
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: 0.01
+          mode: box
+          unit_of_measurement: EUR
