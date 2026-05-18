@@ -228,7 +228,8 @@ class SteamItemSensor(_SteamBase):
         self.entity_id = f"{SENSOR_ITEM_PREFIX}{prefix}{slug}"
 
     def _item(self) -> dict:
-        return (self.coordinator.data or {}).get("items_by_slug", {}).get(self._slug, {})
+        key = f"{self._game_slug}__{self._slug}" if self._game_slug else self._slug
+        return (self.coordinator.data or {}).get("items_by_slug", {}).get(key, {})
 
     @property
     def native_value(self) -> float | None:

@@ -568,7 +568,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "global": global_metrics,
             "per_game": per_game_data,
             "items": all_items_flat,
-            "items_by_slug": {i["slug"]: i for i in all_items_flat},
+            "items_by_slug": {f"{i['game_slug']}__{i['slug']}": i for i in all_items_flat},
             "per_account": {},
             "active_apps": active_apps,
             "stale_count": total_stale,
