@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "CS2 Inventory — Steam Accounts",
+        "description": "Enter your Steam account IDs. Format: `steamid:name,steamid:name` (e.g. `{example}`). Inventories must be public.",
+        "data": {
+          "steam_ids": "Steam IDs"
+        }
+      },
+      "settings": {
+        "title": "CS2 Inventory — Settings",
+        "data": {
+          "scan_interval": "Scan interval (minutes)",
+          "strict_missing_ratio": "Strict missing ratio (0–1)",
+          "min_item_value": "Minimum item value (EUR, 0 = all)",
+          "max_items": "Maximum items (0 = no limit)"
+        }
+      }
+    },
+    "error": {
+      "invalid_steam_ids": "Invalid Steam ID format. Must be 17-digit numbers, optionally followed by :alias."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "CS2 Inventory — Options",
+        "data": {
+          "steam_ids": "Steam IDs",
+          "scan_interval": "Scan interval (minutes)",
+          "strict_missing_ratio": "Strict missing ratio",
+          "min_item_value": "Minimum item value (EUR)",
+          "max_items": "Maximum items"
+        }
+      }
+    },
+    "error": {
+      "invalid_steam_ids": "Invalid Steam ID format."
+    }
+  }
+}
