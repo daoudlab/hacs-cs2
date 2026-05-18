@@ -197,6 +197,10 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         except steam_inventory.InventoryPrivateError as err:
             raise UpdateFailed(f"Steam inventory private: {err}") from err
         except steam_inventory.InventoryFetchError as err:
+            # Transient IP ban — keep showing last known values instead of error state
+            _LOGGER.warning("Inventory fetch failed: %s — reusing stale data", err)
+            if self.data is not None:
+                return self.data
             raise UpdateFailed(f"Steam inventory fetch error: {err}") from err
         except Exception as err:
             raise UpdateFailed(f"Cycle failed: {err}") from err
@@ -332,7 +336,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return _empty_result()
 
             previous_prices = dict(self._previous_prices)
-            limits = RateLimits()
+            limits = RateLimits.coordinator()
             per_game_data: dict[str, dict] = {}
             all_items_flat: list[dict] = []
             all_fresh_prices: dict[str, float] = {}
@@ -346,11 +350,17 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 # ── Fetch inventories for this game ────────────────────────────
                 merged: dict[str, dict] = {}
+                accounts_ok = 0
                 for steam_id, account_name in self.accounts:
-                    raw = steam_inventory.fetch_inventory(
-                        http, steam_id, app_id=appid, context_id=contextid,
-                        stop=self._stop,
-                    )
+                    try:
+                        raw = steam_inventory.fetch_inventory(
+                            http, steam_id, app_id=appid, context_id=contextid,
+                            stop=self._stop,
+                        )
+                        accounts_ok += 1
+                    except steam_inventory.InventoryFetchError as err:
+                        _LOGGER.warning("Inventory fetch failed for %s: %s — skipping", account_name, err)
+                        continue
                     trackable = [
                         item for item in raw
                         if item.get("marketable")
@@ -365,6 +375,12 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         pic = item.get("entity_picture")
                         if pic:
                             self._entity_pictures[name] = pic
+
+                if accounts_ok == 0 and self.accounts:
+                    # All accounts failed — propagate so coordinator can return stale data
+                    raise steam_inventory.InventoryFetchError(
+                        f"All {len(self.accounts)} accounts failed inventory fetch for {game_name}"
+                    )
 
                 inventory = list(merged.values())
                 if cap > 0:

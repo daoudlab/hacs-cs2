@@ -110,6 +110,10 @@ def fetch_inventory(
             else:
                 time.sleep(30)
             continue
+        if resp.status_code == 401:
+            # Temporary IP soft-ban from Steam — return partial results instead of crashing
+            _LOGGER.warning("Inventory 401 for %s (IP rate-limited?) — returning %d items", steam_id, len(items))
+            break
         if resp.status_code != 200:
             raise InventoryFetchError(
                 f"Steam inventory returned HTTP {resp.status_code}"

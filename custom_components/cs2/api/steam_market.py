@@ -61,6 +61,11 @@ class RateLimits:
             max_backoff=300,
         )
 
+    @classmethod
+    def coordinator(cls) -> "RateLimits":
+        """Skip immediately on 429 — coordinator retries on next cycle anyway."""
+        return cls(max_retries=1, max_backoff=0, retry_backoff_base=1)
+
 _LOGGER = logging.getLogger(__name__)
 
 MARKET_HEADERS = {**HEADERS, "Referer": "https://steamcommunity.com/market/"}
