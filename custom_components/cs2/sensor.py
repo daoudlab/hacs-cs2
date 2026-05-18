@@ -44,10 +44,12 @@ async def async_setup_entry(
         known_game_slugs.add(slug)
 
     for item in data.get("items", []):
-        slug = item["slug"]
-        if slug not in known_item_slugs:
-            entities.append(SteamItemSensor(coordinator, slug, item["name"]))
-            known_item_slugs.add(slug)
+        item_slug = item["slug"]
+        game_slug = item.get("game_slug", "")
+        key = f"{game_slug}__{item_slug}"
+        if key not in known_item_slugs:
+            entities.append(SteamItemSensor(coordinator, item_slug, item["name"], game_slug))
+            known_item_slugs.add(key)
 
     async_add_entities(entities)
 
@@ -63,23 +65,26 @@ async def async_setup_entry(
                 new.append(e)
 
         for item in _data.get("items", []):
-            slug = item["slug"]
-            if slug not in known_item_slugs:
-                e = SteamItemSensor(coordinator, slug, item["name"])
-                known_item_slugs.add(slug)
+            item_slug = item["slug"]
+            game_slug = item.get("game_slug", "")
+            key = f"{game_slug}__{item_slug}"
+            if key not in known_item_slugs:
+                e = SteamItemSensor(coordinator, item_slug, item["name"], game_slug)
+                known_item_slugs.add(key)
                 new.append(e)
 
         if new:
             async_add_entities(new)
 
-    coordinator.async_add_listener(_handle_coordinator_update)
+    # async_add_listener returns an unsubscribe callable — wire it to entry unload
+    entry.async_on_unload(coordinator.async_add_listener(_handle_coordinator_update))
 
 
 # ── Base ──────────────────────────────────────────────────────────────────────
 
 class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:steam"
 
@@ -185,15 +190,17 @@ class SteamGameSensor(_SteamBase):
 # ── Per-item sensor ───────────────────────────────────────────────────────────
 
 class SteamItemSensor(_SteamBase):
-    """One sensor per unique item — sensor.steam_item_{slug}."""
+    """One sensor per unique item — sensor.steam_item_{game_slug}_{slug}."""
 
-    def __init__(self, coordinator: CS2Coordinator, slug: str, market_name: str) -> None:
+    def __init__(self, coordinator: CS2Coordinator, slug: str, market_name: str, game_slug: str = "") -> None:
         super().__init__(coordinator)
         self._slug = slug
+        self._game_slug = game_slug
         self._market_name = market_name
-        self._attr_unique_id = f"steam_item_{slug}"
+        prefix = f"{game_slug}_" if game_slug else ""
+        self._attr_unique_id = f"steam_item_{prefix}{slug}"
         self._attr_name = market_name
-        self.entity_id = f"{SENSOR_ITEM_PREFIX}{slug}"
+        self.entity_id = f"{SENSOR_ITEM_PREFIX}{prefix}{slug}"
 
     def _item(self) -> dict:
         for item in (self.coordinator.data or {}).get("items", []):
