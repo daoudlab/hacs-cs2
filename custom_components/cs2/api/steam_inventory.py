@@ -33,6 +33,32 @@ class InventoryFetchError(Exception):
     """Transient or hard failure fetching the inventory."""
 
 
+def check_inventory_count(
+    client: httpx.Client,
+    steam_id: str,
+    app_id: int,
+    context_id: int,
+) -> int:
+    """Return total_inventory_count for a game, 0 on error / private / empty."""
+    url = STEAM_INVENTORY_URL.format(
+        steam_id=steam_id, appid=app_id, contextid=context_id
+    ) + "&count=1"
+    try:
+        resp = client.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code == 403:
+            return 0  # private
+        if resp.status_code == 429:
+            _LOGGER.debug("Rate limited during discovery for appid=%d, skipping", app_id)
+            time.sleep(10)
+            return 0
+        if resp.status_code != 200:
+            return 0
+        data = resp.json()
+        return int(data.get("total_inventory_count", 0))
+    except Exception:
+        return 0
+
+
 def fetch_inventory(
     client: httpx.Client,
     steam_id: str,

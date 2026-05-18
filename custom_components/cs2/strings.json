@@ -2,25 +2,25 @@
   "config": {
     "step": {
       "user": {
-        "title": "CS2 Inventory — Steam Accounts",
+        "title": "Steam Inventory — Steam Accounts",
         "description": "Enter your Steam account IDs. Format: `steamid:name,steamid:name` (e.g. `{example}`). Inventories must be public.",
         "data": {
           "steam_ids": "Steam IDs"
         }
       },
       "settings": {
-        "title": "CS2 Inventory — Settings",
+        "title": "Steam Inventory — Settings",
+        "description": "The integration will auto-discover all your Steam games with marketable items.",
         "data": {
-          "app_id": "Steam App ID (e.g. 730=CS2, 440=TF2, 570=Dota2)",
-          "context_id": "Inventory context ID (2 = most games)",
-          "scan_interval": "Scan interval (minutes)",
-          "strict_missing_ratio": "Strict missing ratio (0–1)",
-          "min_item_value": "Minimum item value (EUR, 0 = all)",
-          "max_items": "Maximum items (0 = no limit)"
+          "scan_interval": "Scan interval (minutes) — recommended: 60",
+          "strict_missing_ratio": "Strict missing ratio (0–1) — recommended: 0.3 (skip if >30% prices missing)",
+          "min_item_value": "Minimum item value (EUR, 0 = all) — recommended: 0.5 to ignore cheap items",
+          "max_items": "Maximum items per game (0 = no limit) — recommended: 200 for large inventories",
+          "include_trading_cards": "Include Steam trading cards (App 753, context 6) — can add hundreds of items"
         }
       },
       "import": {
-        "title": "CS2 Inventory — Historical Import (optional)",
+        "title": "Steam Inventory — Historical Import (optional)",
         "description": "{note}",
         "data": {
           "import_start_date": "Import start date (YYYY-MM-DD, empty = full history)",
@@ -36,15 +36,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "CS2 Inventory — Options",
+        "title": "Steam Inventory — Options",
         "data": {
           "steam_ids": "Steam IDs",
-          "app_id": "Steam App ID (730=CS2, 440=TF2, 570=Dota2…)",
-          "context_id": "Inventory context ID",
-          "scan_interval": "Scan interval (minutes)",
-          "strict_missing_ratio": "Strict missing ratio",
-          "min_item_value": "Minimum item value (EUR)",
-          "max_items": "Maximum items"
+          "scan_interval": "Scan interval (minutes) — recommended: 60",
+          "strict_missing_ratio": "Strict missing ratio — recommended: 0.3",
+          "min_item_value": "Minimum item value (EUR) — recommended: 0.5",
+          "max_items": "Maximum items per game — recommended: 200",
+          "include_trading_cards": "Include Steam trading cards (hundreds of items)"
         }
       }
     },

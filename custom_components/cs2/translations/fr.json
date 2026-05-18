@@ -2,25 +2,25 @@
   "config": {
     "step": {
       "user": {
-        "title": "CS2 Inventory — Comptes Steam",
+        "title": "Steam Inventory — Comptes Steam",
         "description": "Entrez vos Steam IDs. Format : `steamid:nom,steamid:nom` (ex : `{example}`). Les inventaires doivent être publics.",
         "data": {
           "steam_ids": "Steam IDs"
         }
       },
       "settings": {
-        "title": "CS2 Inventory — Paramètres",
+        "title": "Steam Inventory — Paramètres",
+        "description": "L'intégration va détecter automatiquement tous vos jeux Steam avec des items échangeables.",
         "data": {
-          "app_id": "Steam App ID (ex : 730=CS2, 440=TF2, 570=Dota2)",
-          "context_id": "Context ID inventaire (2 = la plupart des jeux)",
-          "scan_interval": "Intervalle de scan (minutes)",
-          "strict_missing_ratio": "Ratio strict manquant (0–1)",
-          "min_item_value": "Valeur minimale des items (EUR, 0 = tous)",
-          "max_items": "Nombre max d'items (0 = illimité)"
+          "scan_interval": "Intervalle de scan (minutes) — recommandé : 60",
+          "strict_missing_ratio": "Ratio strict manquant (0–1) — recommandé : 0.3 (skip si >30% de prix manquants)",
+          "min_item_value": "Valeur minimale (EUR, 0 = tous) — recommandé : 0.5 pour ignorer les items à 5 cents",
+          "max_items": "Nombre max d'items par jeu (0 = illimité) — recommandé : 200 pour les gros inventaires",
+          "include_trading_cards": "Inclure les cartes à échanger Steam (App 753) — peut ajouter des centaines d'items"
         }
       },
       "import": {
-        "title": "CS2 Inventory — Import historique (optionnel)",
+        "title": "Steam Inventory — Import historique (optionnel)",
         "description": "{note}",
         "data": {
           "import_start_date": "Date de début d'import (AAAA-MM-JJ, vide = tout l'historique)",
@@ -36,15 +36,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "CS2 Inventory — Options",
+        "title": "Steam Inventory — Options",
         "data": {
           "steam_ids": "Steam IDs",
-          "app_id": "Steam App ID (730=CS2, 440=TF2, 570=Dota2…)",
-          "context_id": "Context ID inventaire",
-          "scan_interval": "Intervalle de scan (minutes)",
-          "strict_missing_ratio": "Ratio strict manquant",
-          "min_item_value": "Valeur minimale (EUR)",
-          "max_items": "Nombre max d'items"
+          "scan_interval": "Intervalle de scan (minutes) — recommandé : 60",
+          "strict_missing_ratio": "Ratio strict manquant — recommandé : 0.3",
+          "min_item_value": "Valeur minimale (EUR) — recommandé : 0.5",
+          "max_items": "Nombre max d'items par jeu — recommandé : 200",
+          "include_trading_cards": "Inclure les cartes à échanger Steam (des centaines d'items)"
         }
       }
     },

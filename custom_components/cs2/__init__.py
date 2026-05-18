@@ -1,11 +1,10 @@
-"""CS2 Inventory — Home Assistant custom integration."""
+"""Steam Inventory — Home Assistant custom integration."""
 from __future__ import annotations
 
 import logging
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,
@@ -14,6 +13,7 @@ from .const import (
     CONF_MIN_ITEM_VALUE,
     DEFAULT_MIN_VALUE,
     SERVICE_RUN_IMPORT,
+    SERVICE_GENERATE_DASHBOARDS,
 )
 from .coordinator import CS2Coordinator
 
@@ -34,11 +34,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     pending = hass.data.get("cs2_pending_import", {}).pop(
         entry.entry_id, None
     ) or hass.data.get("cs2_pending_import", {}).pop(
-        # flow_id used as key during config flow, entry_id after
-        next(
-            (k for k in hass.data.get("cs2_pending_import", {})),
-            None,
-        ),
+        next((k for k in hass.data.get("cs2_pending_import", {})), None),
         None,
     )
     if pending and pending.get("cookie"):
@@ -46,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"))
         )
 
-    # Register service (once per domain, not per entry)
+    # Register services (once per domain)
     if not hass.services.has_service(DOMAIN, SERVICE_RUN_IMPORT):
         hass.services.async_register(
             DOMAIN,
@@ -61,6 +57,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_GENERATE_DASHBOARDS):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_GENERATE_DASHBOARDS,
+            _handle_generate_dashboards,
+            schema=vol.Schema({}),
+        )
+
     return True
 
 
@@ -71,9 +75,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
         hass.data[DOMAIN].pop(entry.entry_id)
-    # Remove service if no more entries
     if not hass.data.get(DOMAIN):
         hass.services.async_remove(DOMAIN, SERVICE_RUN_IMPORT)
+        hass.services.async_remove(DOMAIN, SERVICE_GENERATE_DASHBOARDS)
     return ok
 
 
@@ -82,21 +86,19 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def _handle_run_import(call: ServiceCall) -> None:
-    """Handle cs2.run_import service call."""
     hass = call.hass
     cookie = call.data[CONF_STEAM_COOKIE].strip()
     start_date = call.data.get(CONF_IMPORT_START_DATE, "").strip() or None
     min_value = float(call.data.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE))
 
-    # Use first loaded coordinator
     coordinators = list(hass.data.get(DOMAIN, {}).values())
     if not coordinators:
-        _LOGGER.error("cs2.run_import: no active CS2 entry found")
+        _LOGGER.error("cs2.run_import: no active Steam Inventory entry found")
         return
 
     coordinator = coordinators[0]
     if not coordinator.data:
-        _LOGGER.warning("cs2.run_import: coordinator has no data yet — run after first cycle")
+        _LOGGER.warning("cs2.run_import: no data yet — wait for first scan cycle")
         return
 
     hass.async_create_task(
@@ -111,7 +113,6 @@ async def _run_import(
     start_date: str | None,
     min_value: float = DEFAULT_MIN_VALUE,
 ) -> None:
-    """Launch the background historical import."""
     from .importer import async_run_import
 
     items = (coordinator.data or {}).get("items", [])
@@ -124,3 +125,29 @@ async def _run_import(
         _LOGGER.info("cs2 import finished: %s", result)
     except Exception as err:
         _LOGGER.error("cs2 import failed: %s", err)
+
+
+async def _handle_generate_dashboards(call: ServiceCall) -> None:
+    hass = call.hass
+    coordinators = list(hass.data.get(DOMAIN, {}).values())
+    if not coordinators or not coordinators[0].data:
+        _LOGGER.warning("cs2.generate_dashboards: no data yet")
+        return
+
+    coordinator = coordinators[0]
+    await hass.async_add_executor_job(
+        _write_dashboards, hass.config.config_dir, coordinator.data
+    )
+
+
+def _write_dashboards(config_dir: str, data: dict) -> None:
+    from .dashboard import generate_dashboards
+    import os
+
+    out_dir = os.path.join(config_dir, "steam_dashboards")
+    os.makedirs(out_dir, exist_ok=True)
+    files = generate_dashboards(data, out_dir)
+    _LOGGER.info(
+        "cs2.generate_dashboards: wrote %d files to %s: %s",
+        len(files), out_dir, ", ".join(files),
+    )

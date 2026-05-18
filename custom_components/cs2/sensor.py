@@ -1,4 +1,4 @@
-"""CS2 Inventory sensor entities."""
+"""Steam Inventory sensor entities (multi-game)."""
 from __future__ import annotations
 
 import logging
@@ -15,7 +15,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SENSOR_TOTAL_ID, SENSOR_ITEM_PREFIX, SENSOR_ACCOUNT_PREFIX
+from .const import (
+    DOMAIN,
+    SENSOR_TOTAL_ID,
+    SENSOR_GAME_PREFIX,
+    SENSOR_ITEM_PREFIX,
+)
 from .coordinator import CS2Coordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,38 +33,40 @@ async def async_setup_entry(
 ) -> None:
     coordinator: CS2Coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: list[SensorEntity] = [CS2TotalSensor(coordinator)]
+    # Start with the global total — always present
+    entities: list[SensorEntity] = [SteamTotalSensor(coordinator)]
+    known_game_slugs: set[str] = set()
+    known_item_slugs: set[str] = set()
 
     data = coordinator.data or {}
-    for item in data.get("items", []):
-        entities.append(CS2ItemSensor(coordinator, item["slug"], item["name"]))
+    for slug, game in data.get("per_game", {}).items():
+        entities.append(SteamGameSensor(coordinator, slug, game["name"]))
+        known_game_slugs.add(slug)
 
-    for account_name in data.get("per_account", {}):
-        entities.append(CS2AccountSensor(coordinator, account_name))
+    for item in data.get("items", []):
+        slug = item["slug"]
+        if slug not in known_item_slugs:
+            entities.append(SteamItemSensor(coordinator, slug, item["name"]))
+            known_item_slugs.add(slug)
 
     async_add_entities(entities)
 
-    # Dynamic add: new items or accounts that appear after initial setup
+    # Dynamically add new game/item sensors as coordinator data arrives
     def _handle_coordinator_update() -> None:
-        known_item_ids = {e.entity_id for e in entities if isinstance(e, CS2ItemSensor)}
-        known_acct_ids = {e.entity_id for e in entities if isinstance(e, CS2AccountSensor)}
         new: list[SensorEntity] = []
-
         _data = coordinator.data or {}
-        for item in _data.get("items", []):
-            eid = f"{SENSOR_ITEM_PREFIX}{item['slug']}"
-            if eid not in known_item_ids:
-                e = CS2ItemSensor(coordinator, item["slug"], item["name"])
-                entities.append(e)
-                known_item_ids.add(eid)
+
+        for slug, game in _data.get("per_game", {}).items():
+            if slug not in known_game_slugs:
+                e = SteamGameSensor(coordinator, slug, game["name"])
+                known_game_slugs.add(slug)
                 new.append(e)
 
-        for account_name in _data.get("per_account", {}):
-            eid = f"{SENSOR_ACCOUNT_PREFIX}{account_name.lower()}"
-            if eid not in known_acct_ids:
-                e = CS2AccountSensor(coordinator, account_name)
-                entities.append(e)
-                known_acct_ids.add(eid)
+        for item in _data.get("items", []):
+            slug = item["slug"]
+            if slug not in known_item_slugs:
+                e = SteamItemSensor(coordinator, slug, item["name"])
+                known_item_slugs.add(slug)
                 new.append(e)
 
         if new:
@@ -70,7 +77,7 @@ async def async_setup_entry(
 
 # ── Base ──────────────────────────────────────────────────────────────────────
 
-class _CS2Base(CoordinatorEntity[CS2Coordinator], SensorEntity):
+class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "EUR"
@@ -84,13 +91,13 @@ class _CS2Base(CoordinatorEntity[CS2Coordinator], SensorEntity):
         return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
 
-# ── Total sensor ──────────────────────────────────────────────────────────────
+# ── Global total sensor ───────────────────────────────────────────────────────
 
-class CS2TotalSensor(_CS2Base):
-    """Global portfolio total — sensor.cs2_inventory_total."""
+class SteamTotalSensor(_SteamBase):
+    """Global portfolio total across all games — sensor.steam_inventory_total."""
 
-    _attr_unique_id = "cs2_inventory_total"
-    _attr_name = "CS2 Inventory Total"
+    _attr_unique_id = "steam_inventory_total"
+    _attr_name = "Steam Inventory Total"
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
@@ -105,14 +112,14 @@ class CS2TotalSensor(_CS2Base):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         g = (self.coordinator.data or {}).get("global", {})
+        active = (self.coordinator.data or {}).get("active_apps", [])
         return {
-            "friendly_name": "CS2 Inventory Total",
+            "friendly_name": "Steam Inventory Total",
             "total_net": g.get("total_net"),
             "profit_brut": g.get("profit_brut"),
             "profit_net": g.get("profit_net"),
             "roi_global": g.get("roi_global"),
             "delta": g.get("delta"),
-            "previous_total": g.get("previous_total"),
             "items_count": g.get("items_count"),
             "items_total_qty": g.get("items_total_qty"),
             "items_with_price": g.get("items_with_price"),
@@ -120,21 +127,71 @@ class CS2TotalSensor(_CS2Base):
             "best_performer_roi": g.get("best_performer_roi"),
             "worst_performer_name": g.get("worst_performer_name"),
             "worst_performer_roi": g.get("worst_performer_roi"),
+            "active_games": [a[2] for a in active],
+            "active_games_count": len(active),
             "last_updated_time": self._last_updated,
-            "last_updated_sheet": datetime.now().strftime("%y%m%d_%H%M"),
         }
+
+
+# ── Per-game total sensor ──────────────────────────────────────────────────────
+
+class SteamGameSensor(_SteamBase):
+    """Per-game portfolio total — sensor.steam_{slug}_total."""
+
+    def __init__(self, coordinator: CS2Coordinator, slug: str, game_name: str) -> None:
+        super().__init__(coordinator)
+        self._slug = slug
+        self._game_name = game_name
+        self._attr_unique_id = f"steam_game_{slug}_total"
+        self._attr_name = f"Steam {game_name} Total"
+        self.entity_id = f"{SENSOR_GAME_PREFIX}{slug}_total"
+
+    def _game(self) -> dict:
+        return (self.coordinator.data or {}).get("per_game", {}).get(self._slug, {})
+
+    @property
+    def native_value(self) -> float | None:
+        m = self._game().get("metrics", {})
+        v = m.get("total_value")
+        return round(v, 2) if v is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        m = self._game().get("metrics", {})
+        game = self._game()
+        return {
+            "friendly_name": f"Steam {self._game_name} Total",
+            "game_name": self._game_name,
+            "appid": game.get("appid"),
+            "total_net": m.get("total_net"),
+            "profit_brut": m.get("profit_brut"),
+            "roi_global": m.get("roi_global"),
+            "delta": m.get("delta"),
+            "items_count": m.get("items_count"),
+            "items_total_qty": m.get("items_total_qty"),
+            "items_with_price": m.get("items_with_price"),
+            "best_performer_name": m.get("best_performer_name"),
+            "best_performer_roi": m.get("best_performer_roi"),
+            "worst_performer_name": m.get("worst_performer_name"),
+            "worst_performer_roi": m.get("worst_performer_roi"),
+            "last_updated_time": self._last_updated,
+        }
+
+    @property
+    def available(self) -> bool:
+        return bool(self._game())
 
 
 # ── Per-item sensor ───────────────────────────────────────────────────────────
 
-class CS2ItemSensor(_CS2Base):
-    """One sensor per unique inventory item — sensor.cs2_item_{slug}."""
+class SteamItemSensor(_SteamBase):
+    """One sensor per unique item — sensor.steam_item_{slug}."""
 
     def __init__(self, coordinator: CS2Coordinator, slug: str, market_name: str) -> None:
         super().__init__(coordinator)
         self._slug = slug
         self._market_name = market_name
-        self._attr_unique_id = f"cs2_item_{slug}"
+        self._attr_unique_id = f"steam_item_{slug}"
         self._attr_name = market_name
         self.entity_id = f"{SENSOR_ITEM_PREFIX}{slug}"
 
@@ -146,14 +203,15 @@ class CS2ItemSensor(_CS2Base):
 
     @property
     def native_value(self) -> float | None:
-        v = self._item().get("current_price")
-        return v
+        return self._item().get("current_price")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         item = self._item()
         return {
             "friendly_name": self._market_name,
+            "game_name": item.get("game_name"),
+            "game_slug": item.get("game_slug"),
             "current_price": item.get("current_price"),
             "buy_price": item.get("buy_price"),
             "before_crash": item.get("before_crash"),
@@ -171,43 +229,3 @@ class CS2ItemSensor(_CS2Base):
     @property
     def available(self) -> bool:
         return bool(self._item())
-
-
-# ── Per-account sensor ────────────────────────────────────────────────────────
-
-class CS2AccountSensor(_CS2Base):
-    """Per-account total — sensor.cs2_inventory_total_{account}."""
-
-    def __init__(self, coordinator: CS2Coordinator, account_name: str) -> None:
-        super().__init__(coordinator)
-        self._account = account_name
-        self._attr_unique_id = f"cs2_inventory_total_{account_name.lower()}"
-        self._attr_name = f"CS2 Inventory — {account_name}"
-        self.entity_id = f"{SENSOR_ACCOUNT_PREFIX}{account_name.lower()}"
-
-    def _metrics(self) -> dict:
-        return (self.coordinator.data or {}).get("per_account", {}).get(self._account, {})
-
-    @property
-    def native_value(self) -> float | None:
-        v = self._metrics().get("total_value")
-        return round(v, 2) if v is not None else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        m = self._metrics()
-        return {
-            "friendly_name": f"CS2 Inventory — {self._account}",
-            "total_net": m.get("total_net"),
-            "profit_brut": m.get("profit_brut"),
-            "roi_global": m.get("roi_global"),
-            "delta": m.get("delta"),
-            "items_count": m.get("items_count"),
-            "items_total_qty": m.get("items_total_qty"),
-            "items_with_price": m.get("items_with_price"),
-            "last_updated_time": self._last_updated,
-        }
-
-    @property
-    def available(self) -> bool:
-        return bool(self._metrics())

@@ -1,3 +1,10 @@
+generate_dashboards:
+  name: Generate Dashboard YAML
+  description: >
+    Write Lovelace dashboard YAML files to /config/steam_dashboards/:
+    one global dashboard + one per detected game.
+    Files can be referenced as YAML dashboards in HA.
+
 run_import:
   name: Run Historical Import
   description: >

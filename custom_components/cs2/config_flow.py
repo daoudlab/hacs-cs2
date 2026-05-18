@@ -1,4 +1,4 @@
-"""Config flow for CS2 Inventory."""
+"""Config flow for CS2/Steam Inventory."""
 from __future__ import annotations
 
 import logging
@@ -17,14 +17,11 @@ from .const import (
     CONF_STRICT_MISSING_RATIO,
     CONF_MIN_ITEM_VALUE,
     CONF_MAX_ITEMS,
-    CONF_APP_ID,
-    CONF_CONTEXT_ID,
+    CONF_INCLUDE_TRADING_CARDS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
-    DEFAULT_APP_ID,
-    DEFAULT_CONTEXT_ID,
     CONF_IMPORT_START_DATE,
     CONF_STEAM_COOKIE,
     CONF_FORGET_COOKIE,
@@ -33,13 +30,6 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _STEAM_ID_RE = re.compile(r"^\d{17}$")
-
-
-def _coerce_float(value: Any) -> float:
-    """Accept both '0.3' and '0,3' (French locale)."""
-    if isinstance(value, str):
-        value = value.replace(",", ".")
-    return float(value)
 
 
 def _parse_steam_ids(raw: str) -> list[tuple[str, str]]:
@@ -75,12 +65,6 @@ STEP_ACCOUNTS_SCHEMA = vol.Schema(
 
 STEP_SETTINGS_SCHEMA = vol.Schema(
     {
-        vol.Optional(CONF_APP_ID, default=DEFAULT_APP_ID): vol.All(
-            int, vol.Range(min=1)
-        ),
-        vol.Optional(CONF_CONTEXT_ID, default=DEFAULT_CONTEXT_ID): vol.All(
-            int, vol.Range(min=1, max=6)
-        ),
         vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
             int, vol.Range(min=5, max=1440)
         ),
@@ -93,12 +77,13 @@ STEP_SETTINGS_SCHEMA = vol.Schema(
         vol.Optional(CONF_MAX_ITEMS, default=DEFAULT_MAX_ITEMS): vol.All(
             int, vol.Range(min=0)
         ),
+        vol.Optional(CONF_INCLUDE_TRADING_CARDS, default=False): bool,
     }
 )
 
 
 class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for CS2 Inventory."""
+    """Handle a config flow for Steam Inventory."""
 
     VERSION = 1
     _data: dict[str, Any] = {}
@@ -107,10 +92,10 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                accounts = _validate_steam_ids(user_input[CONF_STEAM_IDS])
+                _validate_steam_ids(user_input[CONF_STEAM_IDS])
                 self._data[CONF_STEAM_IDS] = user_input[CONF_STEAM_IDS]
                 return await self.async_step_settings()
-            except vol.Invalid as err:
+            except vol.Invalid:
                 errors["base"] = "invalid_steam_ids"
 
         return self.async_show_form(
@@ -130,6 +115,12 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="settings",
             data_schema=STEP_SETTINGS_SCHEMA,
+            description_placeholders={
+                "scan_tip": "60",
+                "ratio_tip": "0.3",
+                "min_tip": "0.5",
+                "max_tip": "200",
+            },
         )
 
     async def async_step_import(self, user_input: dict | None = None) -> FlowResult:
@@ -139,14 +130,12 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             start_date = (user_input.get(CONF_IMPORT_START_DATE) or "").strip()
             forget = user_input.get(CONF_FORGET_COOKIE, True)
 
-            # Store import config in entry data (cookie excluded — passed via hass.data)
             self._data[CONF_IMPORT_START_DATE] = start_date
             self._data[CONF_FORGET_COOKIE] = forget
 
             accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
             title = " + ".join(name for _, name in accounts)
 
-            # Pass cookie via hass.data (never stored in config entry)
             if cookie:
                 self.hass.data.setdefault("cs2_pending_import", {})[
                     self.flow_id
@@ -164,12 +153,16 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="import",
             data_schema=schema,
-            description_placeholders={"note": "Laissez le cookie vide pour ignorer l'import historique."},
+            description_placeholders={
+                "note": "Laissez le cookie vide pour ignorer l'import historique."
+            },
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> CS2OptionsFlow:
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> "CS2OptionsFlow":
         return CS2OptionsFlow(config_entry)
 
 
@@ -191,15 +184,9 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
         current = {**self._config_entry.data, **self._config_entry.options}
         schema = vol.Schema(
             {
-                vol.Required(CONF_STEAM_IDS, default=current.get(CONF_STEAM_IDS, "")): str,
-                vol.Optional(
-                    CONF_APP_ID,
-                    default=current.get(CONF_APP_ID, DEFAULT_APP_ID),
-                ): vol.All(int, vol.Range(min=1)),
-                vol.Optional(
-                    CONF_CONTEXT_ID,
-                    default=current.get(CONF_CONTEXT_ID, DEFAULT_CONTEXT_ID),
-                ): vol.All(int, vol.Range(min=1, max=6)),
+                vol.Required(
+                    CONF_STEAM_IDS, default=current.get(CONF_STEAM_IDS, "")
+                ): str,
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
@@ -216,6 +203,10 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
                     CONF_MAX_ITEMS,
                     default=current.get(CONF_MAX_ITEMS, DEFAULT_MAX_ITEMS),
                 ): vol.All(int, vol.Range(min=0)),
+                vol.Optional(
+                    CONF_INCLUDE_TRADING_CARDS,
+                    default=current.get(CONF_INCLUDE_TRADING_CARDS, False),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
