@@ -16,7 +16,8 @@
           "strict_missing_ratio": "Strict missing ratio (0–1) — recommended: 0.3 (skip if >30% prices missing)",
           "min_item_value": "Minimum item value (EUR, 0 = all) — recommended: 0.5 to ignore cheap items",
           "max_items": "Maximum items per game (0 = no limit) — recommended: 200 for large inventories",
-          "include_trading_cards": "Include Steam trading cards (App 753, context 6) — can add hundreds of items"
+          "include_trading_cards": "Include Steam trading cards (App 753, context 6) — can add hundreds of items",
+          "fetch_floats": "Fetch CS2 float values via CSGOFloat API (CS2 only, opt-in)"
         }
       },
       "import": {
@@ -24,8 +25,7 @@
         "description": "{note}",
         "data": {
           "import_start_date": "Import start date (YYYY-MM-DD, empty = full history)",
-          "steam_cookie": "Steam cookie (steamLoginSecure)",
-          "forget_cookie": "Forget cookie after import"
+          "steam_cookie": "Steam cookie (steamLoginSecure)"
         }
       }
     },
@@ -43,7 +43,8 @@
           "strict_missing_ratio": "Strict missing ratio — recommended: 0.3",
           "min_item_value": "Minimum item value (EUR) — recommended: 0.5",
           "max_items": "Maximum items per game — recommended: 200",
-          "include_trading_cards": "Include Steam trading cards (hundreds of items)"
+          "include_trading_cards": "Include Steam trading cards (hundreds of items)",
+          "fetch_floats": "Fetch CS2 float values (CSGOFloat API)"
         }
       }
     },

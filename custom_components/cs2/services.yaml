@@ -37,6 +37,7 @@ set_buy_price:
 
 run_import:
   name: Run Historical Import
+  admin: true
   description: >
     Import historical CS2 price data into HA long-term statistics.
     Requires a valid Steam session cookie (steamLoginSecure).

@@ -25,6 +25,11 @@ PLATFORMS = ["sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = CS2Coordinator(hass, entry)
+
+    # Pop the pending import cookie immediately — guarantees cleanup even if setup fails later
+    flow_id = entry.data.get("_setup_flow_id")
+    pending = hass.data.get("cs2_pending_import", {}).pop(flow_id, None) if flow_id else None
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -32,14 +37,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Fetch data in background — Steam API takes 2+ min, don't block config flow
     hass.async_create_task(coordinator.async_request_refresh())
 
-    # Check if a pending import was queued from the config flow (cookie transport).
-    # Match by flow_id embedded in entry.data to avoid cross-entry races.
-    flow_id = entry.data.get("_setup_flow_id")
-    pending_store = hass.data.get("cs2_pending_import", {})
-    pending = pending_store.pop(flow_id, None) if flow_id else None
     if pending and pending.get("cookie"):
         hass.async_create_task(
-            _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"))
+            _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"), stop=coordinator._stop)
         )
 
     # Register services (once per domain)
@@ -81,7 +81,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=vol.Schema(
                 {
                     vol.Required("market_hash_name"): str,
-                    vol.Optional("price", default=0.0): vol.Any(float, int, None),
+                    vol.Optional("price", default=0.0): vol.Any(
+                        vol.All(vol.Coerce(float), vol.Range(min=0, max=1_000_000)),
+                        None,
+                    ),
                 }
             ),
         )
@@ -109,6 +112,14 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def _handle_run_import(call: ServiceCall) -> None:
     hass = call.hass
+
+    # Require admin — this service accepts a Steam session cookie
+    if call.context.user_id:
+        user = await hass.auth.async_get_user(call.context.user_id)
+        if not user or not user.is_admin:
+            _LOGGER.error("cs2.run_import: admin access required")
+            return
+
     cookie = call.data[CONF_STEAM_COOKIE].strip()
     start_date = call.data.get(CONF_IMPORT_START_DATE, "").strip() or None
     min_value = float(call.data.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE))
@@ -124,7 +135,7 @@ async def _handle_run_import(call: ServiceCall) -> None:
         return
 
     hass.async_create_task(
-        _run_import(hass, coordinator, cookie, start_date, min_value)
+        _run_import(hass, coordinator, cookie, start_date, min_value, stop=coordinator._stop)
     )
 
 
@@ -134,6 +145,7 @@ async def _run_import(
     cookie: str,
     start_date: str | None,
     min_value: float = DEFAULT_MIN_VALUE,
+    stop=None,
 ) -> None:
     from .importer import async_run_import
 
@@ -143,7 +155,7 @@ async def _run_import(
         return
 
     try:
-        result = await async_run_import(hass, items, cookie, start_date, min_value)
+        result = await async_run_import(hass, items, cookie, start_date, min_value, stop=stop)
         _LOGGER.info("cs2 import finished: %s", result)
     except Exception as err:
         _LOGGER.error("cs2 import failed: %s", err)
@@ -209,3 +221,5 @@ async def _handle_set_buy_price(call) -> None:
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
     await hass.async_add_executor_job(_write)
+    for coordinator in hass.data.get(DOMAIN, {}).values():
+        await coordinator.async_request_refresh()

@@ -184,7 +184,12 @@ def fetch_inventory(
             break
         last_assetid = new_assetid
         _LOGGER.debug("Inventory pagination: next after %s", last_assetid)
-        time.sleep(INVENTORY_PAGE_DELAY)
+        if stop:
+            if stop.wait(INVENTORY_PAGE_DELAY):
+                _LOGGER.debug("Inventory pagination interrupted by stop signal")
+                break
+        else:
+            time.sleep(INVENTORY_PAGE_DELAY)
 
     _LOGGER.info(
         "Fetched %d items from inventory %s (appid=%d)", len(items), steam_id, app_id

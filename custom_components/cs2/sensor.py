@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -112,7 +113,7 @@ class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
 
     @property
     def _last_updated(self) -> str:
-        return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        return dt_util.now().isoformat()
 
 
 # ── Global total sensor ───────────────────────────────────────────────────────

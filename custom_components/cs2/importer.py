@@ -30,6 +30,7 @@ async def async_run_import(
     cookie: str,
     start_date: str | None,
     min_value: float,
+    stop=None,
 ) -> dict[str, Any]:
     """Orchestrate the historical import — runs in executor for HTTP, async for recorder."""
     _LOGGER.info(
@@ -45,6 +46,7 @@ async def async_run_import(
         cookie,
         start_date,
         min_value,
+        stop,
     )
 
     if result["daily_totals"]:
@@ -64,6 +66,7 @@ def _sync_fetch_histories(
     cookie: str,
     start_date: str | None,
     min_value: float,
+    stop=None,
 ) -> dict[str, Any]:
     """Synchronous: fetch pricehistory for all items, aggregate daily totals."""
     daily_totals: dict[str, float] = {}
@@ -72,6 +75,10 @@ def _sync_fetch_histories(
 
     with httpx.Client() as http:
         for item in items:
+            if stop and stop.is_set():
+                _LOGGER.info("CS2 import: interrupted by stop signal after %d items", fetched)
+                break
+
             name = item.get("name", item.get("market_hash_name", ""))
             qty = item.get("quantity", 1)
 
@@ -92,7 +99,12 @@ def _sync_fetch_histories(
                 daily_totals[ds] = daily_totals.get(ds, 0.0) + price * qty
 
             fetched += 1
-            time.sleep(_IMPORT_DELAY)
+            if stop:
+                if stop.wait(_IMPORT_DELAY):
+                    _LOGGER.info("CS2 import: interrupted by stop signal after %d items", fetched)
+                    break
+            else:
+                time.sleep(_IMPORT_DELAY)
 
     # Round all totals
     daily_totals = {ds: round(v, 2) for ds, v in daily_totals.items()}
@@ -108,7 +120,7 @@ async def _inject_statistics(
     unit = "EUR"
 
     metadata = StatisticMetaData(
-        has_mean=False,
+        has_mean=True,
         has_sum=False,
         name="CS2 Portfolio Total",
         source=DOMAIN,

@@ -162,6 +162,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._price_snapshots = data.get("price_snapshots", {})
         self._float_cache = data.get("float_cache", {})
+        self._alert_state = data.get("alert_state", {})
 
     async def _async_save_store(
         self,
@@ -185,6 +186,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "last_discovery": self._last_discovery.isoformat(),
                 "price_snapshots": price_snapshots,
                 "float_cache": float_cache,
+                "alert_state": dict(self._alert_state),
             }
         )
 
@@ -242,7 +244,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "Discovery: found %s (appid=%d, %d items)",
                         game_name, appid, count,
                     )
-                time.sleep(0.5)
+                if self._stop.wait(0.5):
+                    _LOGGER.info("Discovery interrupted by stop signal — preserving cached apps")
+                    return list(self._active_apps) if self._active_apps else list(active.values())
 
         result = list(active.values())
         _LOGGER.info("Discovery complete: %d active games", len(result))
@@ -500,8 +504,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # ── Price threshold alerts ─────────────────────────────────────────
             if price_targets:
-                combined_prices = {**all_fresh_prices}
+                # Include stale prices so alerts fire even during Steam rate-limit periods
+                combined_prices = {**self._current_prices, **all_fresh_prices}
                 self._check_price_alerts(combined_prices, price_targets)
+                # Purge _alert_state entries for removed targets to avoid unbounded growth
+                self._alert_state = {k: v for k, v in self._alert_state.items() if k in price_targets}
 
             # ── Global metrics ─────────────────────────────────────────────────
             prev_global = self._previous_total(previous_prices, all_items_flat)

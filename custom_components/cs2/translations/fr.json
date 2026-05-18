@@ -16,7 +16,8 @@
           "strict_missing_ratio": "Ratio strict manquant (0–1) — recommandé : 0.3 (skip si >30% de prix manquants)",
           "min_item_value": "Valeur minimale (EUR, 0 = tous) — recommandé : 0.5 pour ignorer les items à 5 cents",
           "max_items": "Nombre max d'items par jeu (0 = illimité) — recommandé : 200 pour les gros inventaires",
-          "include_trading_cards": "Inclure les cartes à échanger Steam (App 753) — peut ajouter des centaines d'items"
+          "include_trading_cards": "Inclure les cartes à échanger Steam (App 753) — peut ajouter des centaines d'items",
+          "fetch_floats": "Récupérer les float CS2 via CSGOFloat API (CS2 uniquement, opt-in)"
         }
       },
       "import": {
@@ -24,8 +25,7 @@
         "description": "{note}",
         "data": {
           "import_start_date": "Date de début d'import (AAAA-MM-JJ, vide = tout l'historique)",
-          "steam_cookie": "Cookie Steam (steamLoginSecure)",
-          "forget_cookie": "Oublier le cookie après l'import"
+          "steam_cookie": "Cookie Steam (steamLoginSecure)"
         }
       }
     },
@@ -43,7 +43,8 @@
           "strict_missing_ratio": "Ratio strict manquant — recommandé : 0.3",
           "min_item_value": "Valeur minimale (EUR) — recommandé : 0.5",
           "max_items": "Nombre max d'items par jeu — recommandé : 200",
-          "include_trading_cards": "Inclure les cartes à échanger Steam (des centaines d'items)"
+          "include_trading_cards": "Inclure les cartes à échanger Steam (des centaines d'items)",
+          "fetch_floats": "Récupérer les float CS2 (CSGOFloat API)"
         }
       }
     },

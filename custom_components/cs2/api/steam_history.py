@@ -17,7 +17,10 @@ _CURRENCY_DIVISOR = 100.0  # Steam returns prices in cents for EUR (currency=3)
 
 def _decode_cookie(raw: str) -> str:
     """URL-decode cookie value (browsers copy it URL-encoded)."""
-    return urllib.parse.unquote(raw)
+    decoded = urllib.parse.unquote(raw)
+    if any(c in decoded for c in ("\r", "\n", "\x00")):
+        raise ValueError("Invalid cookie value: CRLF/NUL characters forbidden")
+    return decoded
 
 
 def fetch_item_history(
