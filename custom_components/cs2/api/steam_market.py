@@ -20,7 +20,6 @@ from dataclasses import dataclass
 import httpx
 
 from ..const import (
-    DEFAULT_APP_ID,
     HEADERS,
     MAX_BACKOFF,
     MAX_RETRIES,
@@ -31,6 +30,8 @@ from ..const import (
     RETRY_BACKOFF_BASE,
     STEAM_MARKET_PRICE_URL,
 )
+
+_DEFAULT_APP_ID = 730  # CS2 — callers always pass app_id explicitly
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,7 @@ def fetch_prices(
     on_progress=None,
     limits: RateLimits | None = None,
     stop: threading.Event | None = None,
-    app_id: int = DEFAULT_APP_ID,
+    app_id: int = _DEFAULT_APP_ID,
 ) -> dict[str, float]:
     """Sequentially fetch Steam Market prices with rate limiting."""
     rl = limits or RateLimits()
@@ -121,7 +122,7 @@ def _fetch_one(
     name: str,
     rl: RateLimits,
     stop: threading.Event | None = None,
-    app_id: int = DEFAULT_APP_ID,
+    app_id: int = _DEFAULT_APP_ID,
 ) -> float | None:
     encoded = urllib.parse.quote(name)
     url = STEAM_MARKET_PRICE_URL.format(name=encoded, appid=app_id)

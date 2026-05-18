@@ -14,13 +14,14 @@ from typing import Any
 import httpx
 
 from ..const import (
-    DEFAULT_APP_ID,
-    DEFAULT_CONTEXT_ID,
     HEADERS,
     INVENTORY_PAGE_DELAY,
     STEAM_INVENTORY_URL,
     STEAM_PROFILE_XML_URL,
 )
+
+_DEFAULT_APP_ID = 730   # CS2 — callers always pass app_id explicitly
+_DEFAULT_CONTEXT_ID = 2
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,8 +63,8 @@ def check_inventory_count(
 def fetch_inventory(
     client: httpx.Client,
     steam_id: str,
-    app_id: int = DEFAULT_APP_ID,
-    context_id: int = DEFAULT_CONTEXT_ID,
+    app_id: int = _DEFAULT_APP_ID,
+    context_id: int = _DEFAULT_CONTEXT_ID,
 ) -> list[dict[str, Any]]:
     """Return all marketable items from the public Steam inventory of `steam_id`.
 

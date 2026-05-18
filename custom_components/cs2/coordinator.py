@@ -249,7 +249,17 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                             self._entity_pictures[name] = pic
 
                 inventory = list(merged.values())
-                unique_names = list(merged.keys())
+                # Sort by known price descending before capping so max_items
+                # keeps the most valuable items, not random inventory order
+                if cap > 0:
+                    inventory.sort(
+                        key=lambda i: max(
+                            buy_prices.get(i["market_hash_name"], 0.0),
+                            reference_prices.get(i["market_hash_name"], 0.0),
+                        ),
+                        reverse=True,
+                    )
+                unique_names = [i["market_hash_name"] for i in inventory]
                 names_to_fetch = unique_names[:cap] if cap > 0 else unique_names
 
                 # ── Fetch prices ───────────────────────────────────────────────
