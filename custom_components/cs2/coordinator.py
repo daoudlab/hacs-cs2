@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import storage
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import steam_inventory, steam_market
 from .api.steam_market import RateLimits
@@ -122,6 +123,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_cycle_stats: dict[str, Any] = {}
         self._alert_state: dict[str, str] = {}  # name → "high" | "low" | "none"
         self._stop = threading.Event()
+        self.config_entry = entry
 
     def stop(self) -> None:
         """Signal running executor thread to stop sleeping."""
@@ -157,9 +159,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         raw_apps = data.get("active_apps", [])
         self._active_apps = [tuple(a) for a in raw_apps]
         last_disc = data.get("last_discovery")
-        self._last_discovery = (
-            datetime.datetime.fromisoformat(last_disc) if last_disc else None
-        )
+        if last_disc:
+            dt = datetime.datetime.fromisoformat(last_disc)
+            self._last_discovery = dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            self._last_discovery = None
         self._price_snapshots = data.get("price_snapshots", {})
         self._float_cache = data.get("float_cache", {})
         self._alert_state = data.get("alert_state", {})
@@ -174,7 +178,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._previous_prices = {**self._current_prices}
         self._current_prices = {**new_prices}
         self._active_apps = active_apps
-        self._last_discovery = datetime.datetime.now()
+        self._last_discovery = dt_util.utcnow()
         self._price_snapshots = price_snapshots
         self._float_cache = float_cache
         await self._store.async_save(
@@ -219,7 +223,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             return True
         if self._last_discovery is None:
             return True
-        return (datetime.datetime.now() - self._last_discovery) > _DISCOVERY_INTERVAL
+        return (dt_util.utcnow() - self._last_discovery) > _DISCOVERY_INTERVAL
 
     def _discover_active_apps(
         self, http: httpx.Client
@@ -405,16 +409,17 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 unique_names = [i["market_hash_name"] for i in inventory]
                 names_to_fetch = unique_names[:cap] if cap > 0 else unique_names
+                names_set = set(names_to_fetch)
 
                 # ── Fetch floats (CS2 only, opt-in) ───────────────────────────
                 floats = self._fetch_floats_for_game(
                     http,
-                    [i for i in inventory if i["market_hash_name"] in names_to_fetch],
+                    [i for i in inventory if i["market_hash_name"] in names_set],
                     appid,
                 )
 
                 # ── Fetch prices ───────────────────────────────────────────────
-                prices = steam_market.fetch_prices(
+                prices = steam_market.fetch_prices_parallel(
                     http, names_to_fetch,
                     limits=limits, stop=self._stop, app_id=appid,
                 )
@@ -441,7 +446,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 # ── Compute per-game metrics ───────────────────────────────────
                 items_data = compute_item_metrics(
-                    inventory=[i for i in inventory if i["market_hash_name"] in names_to_fetch],
+                    inventory=[i for i in inventory if i["market_hash_name"] in names_set],
                     prices=prices,
                     floats=floats,
                     previous_prices=previous_prices,
@@ -496,7 +501,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and w["market_hash_name"] not in all_fresh_prices
             ]
             if watchlist_names and not self._stop.is_set():
-                watchlist_prices = steam_market.fetch_prices(
+                watchlist_prices = steam_market.fetch_prices_parallel(
                     http, watchlist_names,
                     limits=limits, stop=self._stop, app_id=730,
                 )
@@ -525,6 +530,10 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Snapshot float_cache AFTER game loop so newly fetched floats are persisted
         float_cache = dict(self._float_cache)
+        # Purge entity_pictures for items no longer in any inventory
+        if all_items_flat:
+            active_names = {i["name"] for i in all_items_flat}
+            self._entity_pictures = {k: v for k, v in self._entity_pictures.items() if k in active_names}
         cycle_duration = round(time.monotonic() - cycle_start, 1)
 
         self._last_cycle_stats = {
@@ -534,7 +543,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "stale_count": total_stale,
             "missing_count": total_missing,
             "cycle_duration_s": cycle_duration,
-            "last_update": datetime.datetime.now().isoformat(),
+            "last_update": dt_util.now().isoformat(),
         }
 
         _LOGGER.info(

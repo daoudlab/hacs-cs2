@@ -29,6 +29,9 @@
         }
       }
     },
+    "abort": {
+      "already_configured": "This Steam account is already configured."
+    },
     "error": {
       "invalid_steam_ids": "Invalid Steam ID format. Must be 17-digit numbers, optionally followed by :alias."
     }

@@ -7,6 +7,7 @@ authoritative flag for items tradeable on the Steam Community Market.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -153,10 +154,10 @@ def fetch_inventory(
             name_color = f"#{raw_color}" if raw_color else None
 
             icon_raw = desc.get("icon_url_large") or desc.get("icon_url", "")
-            entity_picture = (
-                f"https://community.akamaihd.net/economy/image/{icon_raw}"
-                if icon_raw else None
-            )
+            if icon_raw and re.match(r'^[A-Za-z0-9_\-/]+$', icon_raw):
+                entity_picture = f"https://community.akamaihd.net/economy/image/{icon_raw}"
+            else:
+                entity_picture = None
 
             items.append(
                 {
@@ -203,6 +204,9 @@ def fetch_persona_name(client: httpx.Client, steam_id: str) -> str | None:
     try:
         resp = client.get(url, headers=HEADERS, timeout=10)
         if resp.status_code != 200:
+            return None
+        if "<!DOCTYPE" in resp.text[:500].upper():
+            _LOGGER.warning("Unexpected DOCTYPE in Steam profile XML for %s — skipping", steam_id)
             return None
         root = ET.fromstring(resp.text)
         name_el = root.find("steamID")

@@ -12,6 +12,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import CS2Coordinator
@@ -100,6 +101,12 @@ class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
+            name="Steam Inventory",
+            manufacturer="Valve",
+            model="Steam Market",
+        )
 
     @property
     def _last_updated(self) -> str | None:
@@ -132,7 +139,6 @@ class SteamTotalSensor(_SteamBase):
         g = (self.coordinator.data or {}).get("global", {})
         active = (self.coordinator.data or {}).get("active_apps", [])
         return {
-            "friendly_name": "Steam Inventory Total",
             "total_net": g.get("total_net"),
             "profit_brut": g.get("profit_brut"),
             "profit_net": g.get("profit_net"),
@@ -181,7 +187,6 @@ class SteamGameSensor(_SteamBase):
         game = self._game()
         m = game.get("metrics", {})
         return {
-            "friendly_name": f"Steam {self._game_name} Total",
             "game_name": self._game_name,
             "appid": game.get("appid"),
             "total_net": m.get("total_net"),
@@ -239,7 +244,6 @@ class SteamItemSensor(_SteamBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         item = self._item()
         return {
-            "friendly_name": self._market_name,
             "game_name": item.get("game_name"),
             "game_slug": item.get("game_slug"),
             "current_price": item.get("current_price"),

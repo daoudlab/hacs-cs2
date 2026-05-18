@@ -8,6 +8,7 @@ the missing ratio is acceptable.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import random
 import re
@@ -32,6 +33,8 @@ from ..const import (
 )
 
 _DEFAULT_APP_ID = 730  # CS2 — callers always pass app_id explicitly
+_PARALLEL_WORKERS = 3   # Steam tolerates ~3 concurrent requests per IP
+_BATCH_PAUSE_EVERY = 7  # batches of 3 → ~21 requests per pause window
 
 
 @dataclass(frozen=True)
@@ -176,6 +179,67 @@ def _fetch_one(
 
     _LOGGER.warning("All %d retries failed for %s", rl.max_retries, name)
     return None
+
+
+def fetch_prices_parallel(
+    client: httpx.Client,
+    names: list[str],
+    *,
+    on_progress=None,
+    limits: RateLimits | None = None,
+    stop: threading.Event | None = None,
+    app_id: int = _DEFAULT_APP_ID,
+) -> dict[str, float]:
+    """Fetch prices with bounded parallelism (MAX_WORKERS=3).
+
+    httpx.Client is thread-safe — the connection pool is shared across workers.
+    Inter-batch pause every _BATCH_PAUSE_EVERY batches (~21 requests) to avoid
+    triggering Steam's rate limiter at the IP level.
+    """
+    rl = limits or RateLimits()
+    results: dict[str, float] = {}
+    total = len(names)
+    batches = [names[i: i + _PARALLEL_WORKERS] for i in range(0, total, _PARALLEL_WORKERS)]
+    completed = 0
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as executor:
+        for batch_idx, batch in enumerate(batches):
+            if stop and stop.is_set():
+                break
+
+            futures = {
+                executor.submit(_fetch_one, client, name, rl, stop=stop, app_id=app_id): name
+                for name in batch
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                name = futures[fut]
+                completed += 1
+                try:
+                    price = fut.result()
+                except Exception as exc:
+                    _LOGGER.warning("fetch_one raised for %s: %s", name, type(exc).__name__)
+                    price = None
+                if price is not None:
+                    results[name] = price
+                if on_progress:
+                    on_progress(completed, total, name, price)
+
+            if stop and stop.is_set():
+                break
+
+            is_last = batch_idx == len(batches) - 1
+            if not is_last:
+                if (batch_idx + 1) % _BATCH_PAUSE_EVERY == 0:
+                    _LOGGER.info(
+                        "Pausing %ds after %d batches (%d requests)",
+                        rl.pause_seconds, batch_idx + 1, completed,
+                    )
+                    _sleep(rl.pause_seconds, stop)
+                else:
+                    _sleep(random.uniform(rl.request_delay_min, rl.request_delay_max), stop)
+
+    _LOGGER.info("Fetched %d/%d prices from Steam Market (parallel)", len(results), total)
+    return results
 
 
 def normalize_price(raw: str | None) -> float | None:

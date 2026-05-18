@@ -7,8 +7,8 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
     DOMAIN,
@@ -111,14 +111,13 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
 
-    async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict | None = None) -> ConfigFlowResult:
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
 
         errors: dict[str, str] = {}
         description_placeholders: dict[str, str] = {
             "example": "76561190000000001:main,76561190000000002:alt",
-            "connection_status": "",
         }
 
         if user_input is not None:
@@ -143,7 +142,7 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders=description_placeholders,
         )
 
-    async def async_step_settings(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_settings(self, user_input: dict | None = None) -> ConfigFlowResult:
         if user_input is not None:
             self._data.update(user_input)
             return await self.async_step_import()
@@ -151,33 +150,36 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="settings",
             data_schema=STEP_SETTINGS_SCHEMA,
-            description_placeholders={
-                "scan_tip": "60",
-                "ratio_tip": "0.3",
-                "min_tip": "0.5",
-                "max_tip": "200",
-            },
         )
 
-    async def async_step_import(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_import(self, user_input: dict | None = None) -> ConfigFlowResult:
         """Step 3 — optional historical import (cookie + start date)."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             cookie = (user_input.get(CONF_STEAM_COOKIE) or "").strip()
             start_date = (user_input.get(CONF_IMPORT_START_DATE) or "").strip()
 
-            self._data[CONF_IMPORT_START_DATE] = start_date
-            # Embed flow_id so async_setup_entry can match the pending import correctly
-            self._data["_setup_flow_id"] = self.flow_id
+            if start_date:
+                try:
+                    from datetime import date as _date
+                    _date.fromisoformat(start_date)
+                except ValueError:
+                    errors["base"] = "invalid_date"
 
-            accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
-            title = " + ".join(name for _, name in accounts)
+            if not errors:
+                self._data[CONF_IMPORT_START_DATE] = start_date
+                # Embed flow_id so async_setup_entry can match the pending import correctly
+                self._data["_setup_flow_id"] = self.flow_id
 
-            if cookie:
-                self.hass.data.setdefault("cs2_pending_import", {})[
-                    self.flow_id
-                ] = {"cookie": cookie, "start_date": start_date}
+                accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
+                title = " + ".join(name for _, name in accounts)
 
-            return self.async_create_entry(title=title, data=self._data)
+                if cookie:
+                    self.hass.data.setdefault(DOMAIN, {}).setdefault("pending_imports", {})[
+                        self.flow_id
+                    ] = {"cookie": cookie, "start_date": start_date}
+
+                return self.async_create_entry(title=title, data=self._data)
 
         schema = vol.Schema(
             {
@@ -188,6 +190,7 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="import",
             data_schema=schema,
+            errors=errors,
             description_placeholders={
                 "note": "Laissez le cookie vide pour ignorer l'import historique."
             },
@@ -204,10 +207,7 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class CS2OptionsFlow(config_entries.OptionsFlow):
     """Handle options flow (re-configure after setup)."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self._config_entry = config_entry
-
-    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -216,7 +216,7 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
             except vol.Invalid:
                 errors["base"] = "invalid_steam_ids"
 
-        current = {**self._config_entry.data, **self._config_entry.options}
+        current = {**self.config_entry.data, **self.config_entry.options}
         schema = vol.Schema(
             {
                 vol.Required(

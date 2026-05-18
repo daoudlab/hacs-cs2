@@ -26,9 +26,16 @@ PLATFORMS = ["sensor"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = CS2Coordinator(hass, entry)
 
-    # Pop the pending import cookie immediately — guarantees cleanup even if setup fails later
+    # Pop the pending import cookie under DOMAIN namespace — guarantees cleanup even if setup fails
     flow_id = entry.data.get("_setup_flow_id")
-    pending = hass.data.get("cs2_pending_import", {}).pop(flow_id, None) if flow_id else None
+    pending = None
+    try:
+        if flow_id:
+            pending = hass.data.get(DOMAIN, {}).get("pending_imports", {}).pop(flow_id, None)
+    finally:
+        # Second pop is a no-op if already cleaned; ensures cleanup on unexpected exceptions
+        if flow_id:
+            hass.data.get(DOMAIN, {}).get("pending_imports", {}).pop(flow_id, None)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -125,6 +132,13 @@ async def _handle_run_import(call: ServiceCall) -> None:
 
     cookie = call.data[CONF_STEAM_COOKIE].strip()
     start_date = call.data.get(CONF_IMPORT_START_DATE, "").strip() or None
+    if start_date:
+        try:
+            from datetime import date as _date
+            _date.fromisoformat(start_date)
+        except ValueError:
+            _LOGGER.error("cs2.run_import: invalid start_date format (expected YYYY-MM-DD): %s", start_date)
+            return
     min_value = float(call.data.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE))
 
     coordinators = list(hass.data.get(DOMAIN, {}).values())
@@ -166,6 +180,11 @@ async def _run_import(
 
 async def _handle_generate_dashboards(call: ServiceCall) -> None:
     hass = call.hass
+    if not call.context.user_id:
+        _LOGGER.error("cs2.generate_dashboards: user context required"); return
+    user = await hass.auth.async_get_user(call.context.user_id)
+    if not user or not user.is_admin:
+        _LOGGER.error("cs2.generate_dashboards: admin access required"); return
     coordinators = list(hass.data.get(DOMAIN, {}).values())
     if not coordinators or not coordinators[0].data:
         _LOGGER.warning("cs2.generate_dashboards: no data yet")
@@ -193,6 +212,11 @@ def _write_dashboards(config_dir: str, data: dict) -> None:
 async def _handle_force_refresh(call) -> None:
     """Trigger an immediate coordinator refresh."""
     hass = call.hass
+    if not call.context.user_id:
+        _LOGGER.error("cs2.force_refresh: user context required"); return
+    user = await hass.auth.async_get_user(call.context.user_id)
+    if not user or not user.is_admin:
+        _LOGGER.error("cs2.force_refresh: admin access required"); return
     for coordinator in hass.data.get(DOMAIN, {}).values():
         await coordinator.async_request_refresh()
     _LOGGER.info("cs2.force_refresh: triggered")
@@ -203,6 +227,11 @@ async def _handle_set_buy_price(call) -> None:
     import json
     from pathlib import Path
     hass = call.hass
+    if not call.context.user_id:
+        _LOGGER.error("cs2.set_buy_price: user context required"); return
+    user = await hass.auth.async_get_user(call.context.user_id)
+    if not user or not user.is_admin:
+        _LOGGER.error("cs2.set_buy_price: admin access required"); return
     name = call.data["market_hash_name"].strip()
     price = call.data.get("price")
     config_dir = hass.config.config_dir
@@ -213,8 +242,8 @@ async def _handle_set_buy_price(call) -> None:
         if path.exists():
             try:
                 data = json.loads(path.read_text())
-            except Exception:
-                pass
+            except Exception as err:
+                _LOGGER.warning("cs2_buy_prices.json unreadable, starting fresh: %s", err)
         if price is None or price == 0:
             data.pop(name, None)
             _LOGGER.info("cs2.set_buy_price: removed %s", name)

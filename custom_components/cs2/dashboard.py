@@ -1,12 +1,16 @@
 """Generate Lovelace dashboard YAML files for the Steam Inventory integration."""
 from __future__ import annotations
 
+import logging
 import os
+import re
 from typing import Any
 
 import yaml
 
 from .const import SENSOR_TOTAL_ID, SENSOR_GAME_PREFIX, SENSOR_ITEM_PREFIX, SENSOR_SYNC_ID, SENSOR_WATCHLIST_PREFIX
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def generate_dashboards(data: dict[str, Any], out_dir: str) -> list[str]:
@@ -19,6 +23,9 @@ def generate_dashboards(data: dict[str, Any], out_dir: str) -> list[str]:
     files.append("steam_global.yaml")
 
     for slug, game in data.get("per_game", {}).items():
+        if not re.match(r'^[a-z0-9_]+$', slug):
+            _LOGGER.warning("Skipping dashboard for unsafe slug: %r", slug)
+            continue
         filename = f"steam_{slug}.yaml"
         game_path = os.path.join(out_dir, filename)
         with open(game_path, "w", encoding="utf-8") as f:
