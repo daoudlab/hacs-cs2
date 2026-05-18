@@ -107,7 +107,9 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Steam Inventory."""
 
     VERSION = 1
-    _data: dict[str, Any] = {}
+
+    def __init__(self) -> None:
+        self._data: dict[str, Any] = {}
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
         if self._async_current_entries():

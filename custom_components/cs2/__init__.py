@@ -114,11 +114,14 @@ async def _handle_run_import(call: ServiceCall) -> None:
     hass = call.hass
 
     # Require admin — this service accepts a Steam session cookie
-    if call.context.user_id:
-        user = await hass.auth.async_get_user(call.context.user_id)
-        if not user or not user.is_admin:
-            _LOGGER.error("cs2.run_import: admin access required")
-            return
+    # Block automation/system calls with no user context (user_id=None)
+    if not call.context.user_id:
+        _LOGGER.error("cs2.run_import: user context required (cannot call from automation without user)")
+        return
+    user = await hass.auth.async_get_user(call.context.user_id)
+    if not user or not user.is_admin:
+        _LOGGER.error("cs2.run_import: admin access required")
+        return
 
     cookie = call.data[CONF_STEAM_COOKIE].strip()
     start_date = call.data.get(CONF_IMPORT_START_DATE, "").strip() or None

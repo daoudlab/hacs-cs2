@@ -193,7 +193,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ── Core update ───────────────────────────────────────────────────────────
 
     async def _async_update_data(self) -> dict[str, Any]:
-        self._stop.clear()
+        if self._stop.is_set():
+            raise UpdateFailed("Coordinator has been stopped")
         await self._async_load_store()
         try:
             result, save_payload = await self.hass.async_add_executor_job(self._sync_cycle)
