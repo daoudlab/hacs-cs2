@@ -28,6 +28,13 @@ _LOGGER = logging.getLogger(__name__)
 _STEAM_ID_RE = re.compile(r"^\d{17}$")
 
 
+def _coerce_float(value: Any) -> float:
+    """Accept both '0.3' and '0,3' (French locale)."""
+    if isinstance(value, str):
+        value = value.replace(",", ".")
+    return float(value)
+
+
 def _parse_steam_ids(raw: str) -> list[tuple[str, str]]:
     """Parse 'steamid:name,steamid:name' or plain comma-separated IDs."""
     accounts = []
@@ -65,10 +72,10 @@ STEP_SETTINGS_SCHEMA = vol.Schema(
             int, vol.Range(min=5, max=1440)
         ),
         vol.Optional(CONF_STRICT_MISSING_RATIO, default=DEFAULT_STRICT_RATIO): vol.All(
-            float, vol.Range(min=0.0, max=1.0)
+            _coerce_float, vol.Range(min=0.0, max=1.0)
         ),
         vol.Optional(CONF_MIN_ITEM_VALUE, default=DEFAULT_MIN_VALUE): vol.All(
-            float, vol.Range(min=0.0)
+            _coerce_float, vol.Range(min=0.0)
         ),
         vol.Optional(CONF_MAX_ITEMS, default=DEFAULT_MAX_ITEMS): vol.All(
             int, vol.Range(min=0)
@@ -146,11 +153,11 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_STRICT_MISSING_RATIO,
                     default=current.get(CONF_STRICT_MISSING_RATIO, DEFAULT_STRICT_RATIO),
-                ): vol.All(float, vol.Range(min=0.0, max=1.0)),
+                ): vol.All(_coerce_float, vol.Range(min=0.0, max=1.0)),
                 vol.Optional(
                     CONF_MIN_ITEM_VALUE,
                     default=current.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE),
-                ): vol.All(float, vol.Range(min=0.0)),
+                ): vol.All(_coerce_float, vol.Range(min=0.0)),
                 vol.Optional(
                     CONF_MAX_ITEMS,
                     default=current.get(CONF_MAX_ITEMS, DEFAULT_MAX_ITEMS),
