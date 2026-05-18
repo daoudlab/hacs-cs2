@@ -72,7 +72,7 @@ async def async_setup_entry(
 
 class _CS2Base(CoordinatorEntity[CS2Coordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:steam"
 
