@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._entity_pictures: dict[str, str] = {}   # name → url (persisted)
         self._current_prices: dict[str, float] = {}
         self._previous_prices: dict[str, float] = {}
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        """Signal any running executor thread to stop sleeping."""
+        self._stop.set()
 
     @property
     def accounts(self) -> list[tuple[str, str]]:
@@ -111,6 +117,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ── Core update ───────────────────────────────────────────────────────────
 
     async def _async_update_data(self) -> dict[str, Any]:
+        self._stop.clear()
         await self._async_load_store()
         try:
             return await self.hass.async_add_executor_job(self._sync_cycle)
@@ -167,7 +174,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # ── Fetch market prices ────────────────────────────────────────────
             limits = RateLimits()
-            prices = steam_market.fetch_prices(http, names_to_fetch, limits=limits)
+            prices = steam_market.fetch_prices(http, names_to_fetch, limits=limits, stop=self._stop)
             missing = [n for n in names_to_fetch if n not in prices]
 
             # Stale fallback

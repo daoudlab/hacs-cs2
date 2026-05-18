@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import random
 import re
+import threading
 import time
 import urllib.parse
 
@@ -62,6 +63,14 @@ _LOGGER = logging.getLogger(__name__)
 
 MARKET_HEADERS = {**HEADERS, "Referer": "https://steamcommunity.com/market/"}
 
+
+def _sleep(seconds: float, stop: threading.Event | None) -> bool:
+    """Sleep for `seconds`, waking early if `stop` is set. Returns True if stopped."""
+    if stop:
+        return stop.wait(seconds)
+    time.sleep(seconds)
+    return False
+
 _CURRENCY_STRIP = re.compile(r"[€$£¥\s ]")
 _NON_NUMERIC = re.compile(r"[^0-9.,]")
 
@@ -72,6 +81,7 @@ def fetch_prices(
     *,
     on_progress=None,
     limits: RateLimits | None = None,
+    stop: threading.Event | None = None,
 ) -> dict[str, float]:
     """Sequentially fetch Steam Market prices with rate limiting."""
     rl = limits or RateLimits()
@@ -80,37 +90,48 @@ def fetch_prices(
     total = len(names)
 
     for idx, name in enumerate(names, 1):
-        price = _fetch_one(client, name, rl)
+        if stop and stop.is_set():
+            break
+        price = _fetch_one(client, name, rl, stop=stop)
         if price is not None:
             results[name] = price
         if on_progress:
             on_progress(idx, total, name, price)
 
         request_count += 1
+        if stop and stop.is_set():
+            break
         if request_count % rl.requests_before_pause == 0 and idx < total:
             _LOGGER.info(
                 "Pausing %ds after %d requests (rate limit prevention)",
                 rl.pause_seconds, request_count,
             )
-            time.sleep(rl.pause_seconds)
+            _sleep(rl.pause_seconds, stop)
         elif idx < total:
-            time.sleep(random.uniform(rl.request_delay_min, rl.request_delay_max))
+            _sleep(random.uniform(rl.request_delay_min, rl.request_delay_max), stop)
 
     _LOGGER.info("Fetched %d/%d prices from Steam Market", len(results), total)
     return results
 
 
-def _fetch_one(client: httpx.Client, name: str, rl: RateLimits) -> float | None:
+def _fetch_one(
+    client: httpx.Client,
+    name: str,
+    rl: RateLimits,
+    stop: threading.Event | None = None,
+) -> float | None:
     encoded = urllib.parse.quote(name)
     url = STEAM_MARKET_PRICE_URL.format(name=encoded)
 
     for attempt in range(rl.max_retries):
+        if stop and stop.is_set():
+            return None
         try:
             resp = client.get(url, headers=MARKET_HEADERS, timeout=30)
         except httpx.HTTPError as err:
             _LOGGER.warning("HTTP error (attempt %d) for %s: %s", attempt + 1, name, err)
             if attempt < rl.max_retries - 1:
-                time.sleep(rl.retry_backoff_base**attempt)
+                _sleep(rl.retry_backoff_base**attempt, stop)
             continue
 
         if resp.status_code == 429:
@@ -122,7 +143,7 @@ def _fetch_one(client: httpx.Client, name: str, rl: RateLimits) -> float | None:
                 "Rate limited for %s (attempt %d) — sleeping %ds",
                 name, attempt + 1, backoff,
             )
-            time.sleep(backoff)
+            _sleep(backoff, stop)
             continue
 
         if resp.status_code != 200:
