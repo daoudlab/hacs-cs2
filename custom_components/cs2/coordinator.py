@@ -438,6 +438,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     limits=limits, stop=self._stop, app_id=appid,
                 )
 
+                main_pass_count = len(prices)
                 stale_used = []
                 for name in [n for n in names_to_fetch if n not in prices]:
                     if name in previous_prices:
@@ -449,18 +450,27 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # The main pass skips 429s immediately. A 5-min pause lets
                 # Steam's rate-limit window roll over before we retry.
                 if still_missing and not self._stop.is_set():
-                    _LOGGER.info(
-                        "%s: %d prices still missing after main pass — pausing 300s before retry",
-                        game_name, len(still_missing),
-                    )
-                    time.sleep(300)
-                    retry_prices = steam_market.fetch_prices_parallel(
-                        http, still_missing,
-                        limits=RateLimits.coordinator_retry(),
-                        stop=self._stop, app_id=appid,
-                    )
-                    prices.update(retry_prices)
-                    still_missing = [n for n in still_missing if n not in prices]
+                    if main_pass_count == 0 and len(still_missing) > 3:
+                        # Zero prices from main pass = IP completely banned.
+                        # 300s won't clear a severe ban; next scheduled cycle retries.
+                        _LOGGER.warning(
+                            "%s: main pass returned 0 prices (%d missing) — "
+                            "IP severely banned, skipping retry pass for this cycle",
+                            game_name, len(still_missing),
+                        )
+                    else:
+                        _LOGGER.info(
+                            "%s: %d prices still missing after main pass — pausing 300s before retry",
+                            game_name, len(still_missing),
+                        )
+                        self._stop.wait(300)
+                        retry_prices = steam_market.fetch_prices_parallel(
+                            http, still_missing,
+                            limits=RateLimits.coordinator_retry(),
+                            stop=self._stop, app_id=appid,
+                        )
+                        prices.update(retry_prices)
+                        still_missing = [n for n in still_missing if n not in prices]
 
                 total_stale += len(stale_used)
                 total_missing += len(still_missing)
