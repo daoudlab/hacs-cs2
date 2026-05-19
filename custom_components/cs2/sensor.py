@@ -231,7 +231,9 @@ class SteamItemSensor(_SteamBase):
 
     @property
     def native_value(self) -> float | None:
-        return self._item().get("current_price")
+        price = self._item().get("current_price")
+        # 0.0 means no valid price fetched — treat as unavailable (no CS2 item is worth 0€)
+        return price if price else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

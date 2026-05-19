@@ -177,7 +177,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         float_cache: dict[str, float],
     ) -> None:
         self._previous_prices = {**self._current_prices}
-        self._current_prices = {**new_prices}
+        # Merge new prices into current — never overwrite known prices with 0
+        # (market 429 cycles return empty/zero prices; preserve last good values)
+        merged = {**self._current_prices}
+        merged.update({k: v for k, v in new_prices.items() if v > 0})
+        self._current_prices = merged
         self._active_apps = active_apps
         self._last_discovery = dt_util.utcnow()
         self._price_snapshots = price_snapshots
