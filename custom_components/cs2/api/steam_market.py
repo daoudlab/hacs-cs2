@@ -67,17 +67,30 @@ class RateLimits:
 
     @classmethod
     def coordinator(cls) -> "RateLimits":
-        """Sequential requests (1 worker) to avoid bursting Steam's rate limiter.
-
-        The old 3-worker parallel profile triggered 429s mid-cycle for items
-        sorted last (those with no buy/reference price known). Sequential
-        fetching reduces burst rate while still completing a 70-item cycle
-        in ~4 min, well within the 60-min scan interval.
+        """Skip 429s immediately in the main pass — the coordinator does a separate
+        retry pass after a 5-min cooldown for still-missing items.
+        Sequential workers (1) reduce burst rate vs the old 3-worker default.
         """
         return cls(
-            max_retries=2,
-            max_backoff=40,
+            max_retries=1,
+            max_backoff=0,
+            retry_backoff_base=1,
+            parallel_workers=1,
+        )
+
+    @classmethod
+    def coordinator_retry(cls) -> "RateLimits":
+        """Used for the second pass on still-missing items after the 5-min cooldown.
+        Slower and more patient since we're trying to recover from a rate limit.
+        """
+        return cls(
+            request_delay_min=4.0,
+            request_delay_max=6.0,
+            requests_before_pause=10,
+            pause_seconds=30,
+            max_retries=3,
             retry_backoff_base=2,
+            max_backoff=60,
             parallel_workers=1,
         )
 

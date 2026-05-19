@@ -446,17 +446,18 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 still_missing = [n for n in names_to_fetch if n not in prices]
 
                 # ── Retry still-missing after a cooldown ───────────────────────
-                # If some items were 429'd during the main pass, a short pause
-                # lets the rate limit window roll over before we retry.
+                # The main pass skips 429s immediately. A 5-min pause lets
+                # Steam's rate-limit window roll over before we retry.
                 if still_missing and not self._stop.is_set():
                     _LOGGER.info(
-                        "%s: %d prices still missing after main pass — pausing 60s then retrying",
+                        "%s: %d prices still missing after main pass — pausing 300s before retry",
                         game_name, len(still_missing),
                     )
-                    time.sleep(60)
+                    time.sleep(300)
                     retry_prices = steam_market.fetch_prices_parallel(
                         http, still_missing,
-                        limits=limits, stop=self._stop, app_id=appid,
+                        limits=RateLimits.coordinator_retry(),
+                        stop=self._stop, app_id=appid,
                     )
                     prices.update(retry_prices)
                     still_missing = [n for n in still_missing if n not in prices]
