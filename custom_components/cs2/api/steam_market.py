@@ -37,6 +37,14 @@ _PARALLEL_WORKERS = 3   # Steam tolerates ~3 concurrent requests per IP
 _BATCH_PAUSE_EVERY = 7  # batches of 3 → ~21 requests per pause window
 
 
+class _CycleAbort(Exception):
+    """Raised by _fetch_one when abort_on_429=True and a 429 is received.
+
+    Propagates through ThreadPoolExecutor.fut.result() to fetch_prices_parallel
+    which catches it and returns the prices collected so far (circuit-breaker).
+    """
+
+
 @dataclass(frozen=True)
 class RateLimits:
     """Tunable rate-limit knobs for a single fetch pass.
@@ -52,6 +60,7 @@ class RateLimits:
     retry_backoff_base: int = RETRY_BACKOFF_BASE
     max_backoff: int = MAX_BACKOFF
     parallel_workers: int = _PARALLEL_WORKERS
+    abort_on_429: bool = False  # circuit-breaker: abort the whole pass on first 429
 
     @classmethod
     def patient(cls) -> "RateLimits":
@@ -67,15 +76,20 @@ class RateLimits:
 
     @classmethod
     def coordinator(cls) -> "RateLimits":
-        """Skip 429s immediately in the main pass — the coordinator does a separate
-        retry pass after a 5-min cooldown for still-missing items.
-        Sequential workers (1) reduce burst rate vs the old 3-worker default.
+        """Conservative pacing (4.5-6s) stays under the ~20 req/min Steam limit.
+        Circuit-breaker on first 429: abort the pass and return prices so far.
+        The coordinator retries still-missing items after a 5-min cooldown.
         """
         return cls(
+            request_delay_min=4.5,
+            request_delay_max=6.0,
+            requests_before_pause=15,
+            pause_seconds=30,
             max_retries=1,
-            max_backoff=0,
             retry_backoff_base=1,
+            max_backoff=0,
             parallel_workers=1,
+            abort_on_429=True,
         )
 
     @classmethod
@@ -84,13 +98,13 @@ class RateLimits:
         Slower and more patient since we're trying to recover from a rate limit.
         """
         return cls(
-            request_delay_min=4.0,
+            request_delay_min=4.5,
             request_delay_max=6.0,
             requests_before_pause=10,
             pause_seconds=30,
             max_retries=3,
             retry_backoff_base=2,
-            max_backoff=60,
+            max_backoff=120,
             parallel_workers=1,
         )
 
@@ -128,7 +142,14 @@ def fetch_prices(
     for idx, name in enumerate(names, 1):
         if stop and stop.is_set():
             break
-        price = _fetch_one(client, name, rl, stop=stop, app_id=app_id)
+        try:
+            price = _fetch_one(client, name, rl, stop=stop, app_id=app_id)
+        except _CycleAbort:
+            _LOGGER.warning(
+                "Circuit-breaker at item %d/%d — returning %d prices collected so far",
+                idx, total, len(results),
+            )
+            break
         if price is not None:
             results[name] = price
         if on_progress:
@@ -172,10 +193,20 @@ def _fetch_one(
             continue
 
         if resp.status_code == 429:
-            backoff = min(
-                rl.max_backoff,
-                30 + random.randint(0, 15) * (rl.retry_backoff_base**attempt),
-            )
+            if rl.abort_on_429:
+                _LOGGER.warning(
+                    "Rate limited for %s — circuit-breaker, aborting fetch pass",
+                    name,
+                )
+                raise _CycleAbort()
+            retry_after = int(resp.headers.get("Retry-After", 0))
+            if retry_after > 0:
+                backoff = min(rl.max_backoff, int(retry_after * 1.2))
+            else:
+                backoff = min(
+                    rl.max_backoff,
+                    30 + random.randint(0, 15) * (rl.retry_backoff_base**attempt),
+                )
             _LOGGER.warning(
                 "Rate limited for %s (attempt %d) — sleeping %ds",
                 name, attempt + 1, backoff,
@@ -242,6 +273,12 @@ def fetch_prices_parallel(
                 completed += 1
                 try:
                     price = fut.result()
+                except _CycleAbort:
+                    _LOGGER.warning(
+                        "Circuit-breaker at item %d/%d — returning %d prices collected so far",
+                        completed, total, len(results),
+                    )
+                    return results
                 except Exception as exc:
                     _LOGGER.warning("fetch_one raised for %s: %s", name, type(exc).__name__)
                     price = None
