@@ -186,8 +186,8 @@ def fetch_inventory(
             name_color = f"#{raw_color}" if raw_color else None
 
             icon_raw = desc.get("icon_url_large") or desc.get("icon_url", "")
-            if icon_raw and re.match(r'^[A-Za-z0-9_\-/]+$', icon_raw):
-                entity_picture = f"https://community.akamaihd.net/economy/image/{icon_raw}"
+            if icon_raw and re.match(r'^[A-Za-z0-9_\-/+=]+$', icon_raw):
+                entity_picture = f"https://community.steamstatic.com/economy/image/{icon_raw}"
             else:
                 entity_picture = None
 
