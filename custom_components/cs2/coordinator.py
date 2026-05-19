@@ -189,19 +189,23 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_discovery = dt_util.utcnow()
         self._price_snapshots = price_snapshots
         self._float_cache = float_cache
-        await self._store.async_save(
-            {
-                "entity_pictures": self._entity_pictures,
-                "current_prices": self._current_prices,
-                "previous_prices": self._previous_prices,
-                "active_apps": [list(a) for a in active_apps],
-                "last_discovery": self._last_discovery.isoformat(),
-                "price_snapshots": price_snapshots,
-                "float_cache": float_cache,
-                "alert_state": dict(self._alert_state),
-                "price_timestamps": self._price_timestamps,
-            }
-        )
+        # _price_timestamps and _entity_pictures are instance state — not passed as args
+        try:
+            await self._store.async_save(
+                {
+                    "entity_pictures": self._entity_pictures,
+                    "current_prices": self._current_prices,
+                    "previous_prices": self._previous_prices,
+                    "active_apps": [list(a) for a in active_apps],
+                    "last_discovery": self._last_discovery.isoformat(),
+                    "price_snapshots": price_snapshots,
+                    "float_cache": float_cache,
+                    "alert_state": dict(self._alert_state),
+                    "price_timestamps": self._price_timestamps,
+                }
+            )
+        except Exception as err:
+            _LOGGER.error("Failed to persist coordinator state: %s", err)
 
     # ── Core update ───────────────────────────────────────────────────────────
 

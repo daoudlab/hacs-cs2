@@ -233,7 +233,7 @@ def _fetch_one(
             _LOGGER.debug("Price for %s: %.2f EUR", name, price)
         return price
 
-    _LOGGER.warning("All %d retries failed for %s", rl.max_retries, name)
+    _LOGGER.warning("Giving up on %s after %d attempt(s)", name, rl.max_retries)
     return None
 
 
