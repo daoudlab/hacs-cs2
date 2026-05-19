@@ -387,7 +387,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                             stop=self._stop,
                         )
                         accounts_ok += 1
-                    except steam_inventory.InventoryFetchError as err:
+                    except (steam_inventory.InventoryFetchError, steam_inventory.InventoryPrivateError) as err:
                         _LOGGER.warning("Inventory fetch failed for %s: %s — skipping", account_name, err)
                         continue
                     trackable = [
