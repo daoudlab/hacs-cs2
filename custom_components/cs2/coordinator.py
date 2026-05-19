@@ -346,7 +346,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         prices_24h = self._price_snapshots.get(date_24h, {})
         prices_7d = self._price_snapshots.get(date_7d, {})
 
-        with httpx.Client() as http:
+        with httpx.Client(http2=False) as http:
             # ── Discovery ─────────────────────────────────────────────────────
             active_apps = list(self._active_apps)
             if self._needs_discovery():

@@ -3,16 +3,22 @@
 Uses the generic Steam inventory API (game-agnostic). Items with
 ``marketable: 1`` in the Steam API response are tracked — this is the
 authoritative flag for items tradeable on the Steam Community Market.
+
+Note: inventory requests use urllib (not httpx) — httpx's TLS fingerprint
+triggers Steam's bot-detection on the inventory endpoint, while urllib passes.
 """
 from __future__ import annotations
 
+import json as _json
 import logging
 import re
 import time
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any
 
-import httpx
+import httpx  # kept for type hints in coordinator; not used for requests here
 
 from ..const import (
     HEADERS,
@@ -35,6 +41,32 @@ class InventoryFetchError(Exception):
     """Transient or hard failure fetching the inventory."""
 
 
+class _Resp:
+    """Minimal response wrapper around urllib so callers stay unchanged."""
+    def __init__(self, status_code: int, body: bytes = b"") -> None:
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> Any:
+        return _json.loads(self._body)
+
+    @property
+    def text(self) -> str:
+        return self._body.decode("utf-8", errors="replace")
+
+
+def _get(url: str, timeout: int = 30) -> _Resp:
+    """urllib GET with browser-like headers — avoids httpx TLS fingerprint block."""
+    req = urllib.request.Request(url, headers=HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return _Resp(r.status, r.read())
+    except urllib.error.HTTPError as e:
+        return _Resp(e.code, b"")
+    except Exception as err:
+        raise InventoryFetchError(f"HTTP error: {err}") from err
+
+
 def check_inventory_count(
     client: httpx.Client,
     steam_id: str,
@@ -47,7 +79,7 @@ def check_inventory_count(
         steam_id=steam_id, appid=app_id, contextid=context_id
     ) + "&count=1"
     try:
-        resp = client.get(url, headers=HEADERS, timeout=10)
+        resp = _get(url, timeout=10)
         if resp.status_code == 403:
             return 0  # private
         if resp.status_code == 429:
@@ -92,9 +124,9 @@ def fetch_inventory(
             url += f"&start_assetid={last_assetid}"
 
         try:
-            resp = client.get(url, headers=HEADERS, timeout=30)
-        except httpx.HTTPError as err:
-            raise InventoryFetchError(f"HTTP error: {err}") from err
+            resp = _get(url, timeout=30)
+        except InventoryFetchError:
+            raise
 
         if resp.status_code == 403:
             raise InventoryPrivateError(
@@ -202,7 +234,7 @@ def fetch_persona_name(client: httpx.Client, steam_id: str) -> str | None:
     """Public profile XML → display name. Best-effort."""
     url = STEAM_PROFILE_XML_URL.format(steam_id=steam_id)
     try:
-        resp = client.get(url, headers=HEADERS, timeout=10)
+        resp = _get(url, timeout=10)
         if resp.status_code != 200:
             return None
         if "<!DOCTYPE" in resp.text[:500].upper():
