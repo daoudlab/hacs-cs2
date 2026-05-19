@@ -403,7 +403,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 inventory = raw_items
                 if cap > 0:
-                    # Sort by best known price descending so cap keeps most-valuable items
+                    # Sort by best known price descending so cap keeps most-valuable items.
+                    # Include _current_prices so items fetched in previous cycles are
+                    # ordered correctly even when missing from buy/reference price files.
                     seen_order: dict[str, int] = {}
                     for item in inventory:
                         name = item["market_hash_name"]
@@ -411,6 +413,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                             seen_order[name] = max(
                                 buy_prices.get(name, 0.0),
                                 reference_prices.get(name, 0.0),
+                                self._current_prices.get(name, 0.0),
                             )
                     inventory = sorted(
                         inventory,
@@ -441,6 +444,23 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         prices[name] = previous_prices[name]
                         stale_used.append(name)
                 still_missing = [n for n in names_to_fetch if n not in prices]
+
+                # ── Retry still-missing after a cooldown ───────────────────────
+                # If some items were 429'd during the main pass, a short pause
+                # lets the rate limit window roll over before we retry.
+                if still_missing and not self._stop.is_set():
+                    _LOGGER.info(
+                        "%s: %d prices still missing after main pass — pausing 60s then retrying",
+                        game_name, len(still_missing),
+                    )
+                    time.sleep(60)
+                    retry_prices = steam_market.fetch_prices_parallel(
+                        http, still_missing,
+                        limits=limits, stop=self._stop, app_id=appid,
+                    )
+                    prices.update(retry_prices)
+                    still_missing = [n for n in still_missing if n not in prices]
+
                 total_stale += len(stale_used)
                 total_missing += len(still_missing)
 

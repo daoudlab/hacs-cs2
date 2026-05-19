@@ -51,6 +51,7 @@ class RateLimits:
     max_retries: int = MAX_RETRIES
     retry_backoff_base: int = RETRY_BACKOFF_BASE
     max_backoff: int = MAX_BACKOFF
+    parallel_workers: int = _PARALLEL_WORKERS
 
     @classmethod
     def patient(cls) -> "RateLimits":
@@ -66,8 +67,19 @@ class RateLimits:
 
     @classmethod
     def coordinator(cls) -> "RateLimits":
-        """Skip immediately on 429 — coordinator retries on next cycle anyway."""
-        return cls(max_retries=1, max_backoff=0, retry_backoff_base=1)
+        """Sequential requests (1 worker) to avoid bursting Steam's rate limiter.
+
+        The old 3-worker parallel profile triggered 429s mid-cycle for items
+        sorted last (those with no buy/reference price known). Sequential
+        fetching reduces burst rate while still completing a 70-item cycle
+        in ~4 min, well within the 60-min scan interval.
+        """
+        return cls(
+            max_retries=2,
+            max_backoff=40,
+            retry_backoff_base=2,
+            parallel_workers=1,
+        )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,12 +209,13 @@ def fetch_prices_parallel(
     triggering Steam's rate limiter at the IP level.
     """
     rl = limits or RateLimits()
+    workers = rl.parallel_workers
     results: dict[str, float] = {}
     total = len(names)
-    batches = [names[i: i + _PARALLEL_WORKERS] for i in range(0, total, _PARALLEL_WORKERS)]
+    batches = [names[i: i + workers] for i in range(0, total, workers)]
     completed = 0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         for batch_idx, batch in enumerate(batches):
             if stop and stop.is_set():
                 break
