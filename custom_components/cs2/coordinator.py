@@ -29,6 +29,7 @@ from .const import (
     CONF_INCLUDE_TRADING_CARDS,
     CONF_FETCH_FLOATS,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_FETCH_CHUNK_SIZE,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
@@ -120,6 +121,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_discovery: datetime.datetime | None = None
         self._price_snapshots: dict[str, dict[str, float]] = {}
         self._float_cache: dict[str, float] = {}
+        self._price_timestamps: dict[str, float] = {}  # name → epoch of last fetch attempt
         self._last_cycle_stats: dict[str, Any] = {}
         self._alert_state: dict[str, str] = {}  # name → "high" | "low" | "none"
         self._stop = threading.Event()
@@ -168,6 +170,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._price_snapshots = data.get("price_snapshots", {})
         self._float_cache = data.get("float_cache", {})
         self._alert_state = data.get("alert_state", {})
+        self._price_timestamps = data.get("price_timestamps", {})
 
     async def _async_save_store(
         self,
@@ -196,6 +199,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "price_snapshots": price_snapshots,
                 "float_cache": float_cache,
                 "alert_state": dict(self._alert_state),
+                "price_timestamps": self._price_timestamps,
             }
         )
 
@@ -432,45 +436,50 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     appid,
                 )
 
-                # ── Fetch prices ───────────────────────────────────────────────
-                prices = steam_market.fetch_prices_parallel(
-                    http, names_to_fetch,
+                # ── Rolling price fetch ────────────────────────────────────────
+                # Pick the CHUNK_SIZE items with the oldest fetch timestamp so
+                # every item gets refreshed roughly every (N/CHUNK_SIZE * interval).
+                # Items never fetched have timestamp 0 and always go first.
+                sorted_by_age = sorted(
+                    names_to_fetch,
+                    key=lambda n: self._price_timestamps.get(n, 0.0),
+                )
+                chunk = sorted_by_age[:DEFAULT_FETCH_CHUNK_SIZE]
+                attempted: list[str] = []
+
+                def _on_progress(
+                    idx: int, total: int, name: str, price: float | None
+                ) -> None:
+                    attempted.append(name)
+
+                fresh_chunk = steam_market.fetch_prices_parallel(
+                    http, chunk,
+                    on_progress=_on_progress,
                     limits=limits, stop=self._stop, app_id=appid,
                 )
 
-                main_pass_count = len(prices)
-                stale_used = []
-                for name in [n for n in names_to_fetch if n not in prices]:
-                    if name in previous_prices:
-                        prices[name] = previous_prices[name]
-                        stale_used.append(name)
+                now_ts = time.time()
+                for name in attempted:
+                    self._price_timestamps[name] = now_ts
+
+                # Prices for metrics: accumulated current_prices + fresh overrides.
+                # Items outside this cycle's chunk show their last stored price.
+                prices: dict[str, float] = {
+                    n: self._current_prices[n]
+                    for n in names_to_fetch
+                    if self._current_prices.get(n, 0.0) > 0
+                }
+                prices.update({k: v for k, v in fresh_chunk.items() if v > 0})
+
+                stale_used = [n for n in names_to_fetch if n not in fresh_chunk]
                 still_missing = [n for n in names_to_fetch if n not in prices]
 
-                # ── Retry still-missing after a cooldown ───────────────────────
-                # The main pass skips 429s immediately. A 5-min pause lets
-                # Steam's rate-limit window roll over before we retry.
-                if still_missing and not self._stop.is_set():
-                    if main_pass_count == 0 and len(still_missing) > 3:
-                        # Zero prices from main pass = IP completely banned.
-                        # 300s won't clear a severe ban; next scheduled cycle retries.
-                        _LOGGER.warning(
-                            "%s: main pass returned 0 prices (%d missing) — "
-                            "IP severely banned, skipping retry pass for this cycle",
-                            game_name, len(still_missing),
-                        )
-                    else:
-                        _LOGGER.info(
-                            "%s: %d prices still missing after main pass — pausing 300s before retry",
-                            game_name, len(still_missing),
-                        )
-                        self._stop.wait(300)
-                        retry_prices = steam_market.fetch_prices_parallel(
-                            http, still_missing,
-                            limits=RateLimits.coordinator_retry(),
-                            stop=self._stop, app_id=appid,
-                        )
-                        prices.update(retry_prices)
-                        still_missing = [n for n in still_missing if n not in prices]
+                _LOGGER.debug(
+                    "%s: rolling chunk %d/%d items — %d fresh, %d stale, %d missing",
+                    game_name, len(chunk), len(names_to_fetch),
+                    len(fresh_chunk), len(stale_used) - (len(chunk) - len(fresh_chunk)),
+                    len(still_missing),
+                )
 
                 total_stale += len(stale_used)
                 total_missing += len(still_missing)
