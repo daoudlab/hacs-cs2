@@ -21,7 +21,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-_IMPORT_DELAY = 1.5  # seconds between item fetches (polite rate-limit)
+_IMPORT_DELAY = 2.5  # seconds between item fetches (polite rate-limit)
 
 
 async def async_run_import(
@@ -117,9 +117,27 @@ async def _inject_statistics(
     hass: HomeAssistant,
     daily_totals: dict[str, float],
 ) -> None:
-    """Inject daily totals into HA recorder as external statistics."""
+    """Inject daily totals into HA recorder as external statistics (idempotent)."""
     statistic_id = f"{DOMAIN}:portfolio_total"
     unit = "EUR"
+
+    # Idempotence: find the last already-recorded date and skip older points
+    cutoff_date: str | None = None
+    try:
+        last = await get_last_statistics(hass, 1, statistic_id, False, {"mean"})
+        if last and statistic_id in last and last[statistic_id]:
+            last_start = last[statistic_id][0].get("start")
+            if last_start is not None:
+                if hasattr(last_start, "date"):
+                    cutoff_date = last_start.date().isoformat()
+                else:
+                    cutoff_date = str(last_start)[:10]
+                _LOGGER.info(
+                    "CS2 import: last recorded stat = %s — skipping older dates",
+                    cutoff_date,
+                )
+    except Exception as err:
+        _LOGGER.warning("CS2 import: could not read last statistics, will inject all: %s", err)
 
     metadata = StatisticMetaData(
         has_mean=True,
@@ -132,6 +150,8 @@ async def _inject_statistics(
 
     statistics: list[StatisticData] = []
     for ds in sorted(daily_totals):
+        if cutoff_date and ds <= cutoff_date:
+            continue  # already imported
         try:
             dt = datetime.fromisoformat(ds).replace(
                 hour=12, minute=0, tzinfo=timezone.utc
@@ -148,4 +168,7 @@ async def _inject_statistics(
 
     if statistics:
         async_add_external_statistics(hass, metadata, statistics)
-        _LOGGER.info("CS2 import: injected %d stat points", len(statistics))
+        _LOGGER.info("CS2 import: injected %d new stat points (skipped=%d already recorded)",
+                     len(statistics), len(daily_totals) - len(statistics))
+    else:
+        _LOGGER.info("CS2 import: no new stat points to inject (all already recorded up to %s)", cutoff_date)

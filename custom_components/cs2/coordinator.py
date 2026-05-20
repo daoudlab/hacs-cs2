@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import steam_inventory, steam_market
+from .api.steam_inventory import InventoryBannedError
 from .api.steam_market import RateLimits
 from .compute import compute_item_metrics, compute_global_metrics
 from .const import (
@@ -126,6 +127,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._price_timestamps: dict[str, float] = {}  # name → epoch of last fetch attempt
         self._last_cycle_stats: dict[str, Any] = {}
         self._alert_state: dict[str, str] = {}  # name → "high" | "low" | "none"
+        self._inv_cooldown: dict[str, float] = {}  # steam_id → epoch when ban expires
         self._stop = threading.Event()
         self._import_running: bool = False
         self.config_entry = entry
@@ -177,6 +179,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._float_cache = data.get("float_cache", {})
         self._alert_state = data.get("alert_state", {})
         self._price_timestamps = data.get("price_timestamps", {})
+        self._inv_cooldown = {k: float(v) for k, v in data.get("inv_cooldown", {}).items()}
 
     async def _async_save_store(
         self,
@@ -208,6 +211,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "float_cache": float_cache,
                     "alert_state": dict(self._alert_state),
                     "price_timestamps": self._price_timestamps,
+                    "inv_cooldown": {k: v for k, v in self._inv_cooldown.items() if v > time.time()},
                 }
             )
         except Exception as err:
@@ -391,12 +395,29 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raw_items: list[dict] = []
                 accounts_ok = 0
                 for steam_id, account_name in self.accounts:
+                    banned_until = self._inv_cooldown.get(steam_id, 0.0)
+                    if time.time() < banned_until:
+                        remaining = int(banned_until - time.time())
+                        _LOGGER.info(
+                            "Skipping %s inventory (%s) — IP ban cooldown %ds remaining",
+                            account_name, game_name, remaining,
+                        )
+                        continue
                     try:
                         raw = steam_inventory.fetch_inventory(
                             http, steam_id, app_id=appid, context_id=contextid,
                             stop=self._stop,
                         )
                         accounts_ok += 1
+                    except InventoryBannedError as err:
+                        cooldown_until = time.time() + 3600
+                        self._inv_cooldown[steam_id] = cooldown_until
+                        _LOGGER.warning(
+                            "Inventory 401 for %s (%s) — setting 1h cooldown until %s",
+                            account_name, game_name,
+                            time.strftime("%H:%M", time.localtime(cooldown_until)),
+                        )
+                        continue
                     except (steam_inventory.InventoryFetchError, steam_inventory.InventoryPrivateError) as err:
                         _LOGGER.warning("Inventory fetch failed for %s: %s — skipping", account_name, err)
                         continue
@@ -597,6 +618,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._entity_pictures = {k: v for k, v in self._entity_pictures.items() if k in active_names}
         cycle_duration = round(time.monotonic() - cycle_start, 1)
 
+        now = time.time()
+        banned_accounts = [sid for sid, until in self._inv_cooldown.items() if now < until]
         self._last_cycle_stats = {
             "total_value": global_metrics["total_value"],
             "items_count": global_metrics["items_count"],
@@ -605,6 +628,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "missing_count": total_missing,
             "cycle_duration_s": cycle_duration,
             "last_update": dt_util.now().isoformat(),
+            "banned_accounts": len(banned_accounts),
         }
 
         _LOGGER.info(

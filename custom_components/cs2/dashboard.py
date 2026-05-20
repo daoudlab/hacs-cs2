@@ -181,17 +181,15 @@ def _game_dashboard(slug: str, game: dict) -> dict:
     pl_items = [i for i in sorted_items if i.get("buy_price")]
 
     def _item_entity(item: dict, *, secondary: str | None = None) -> dict:
-        prefix = f"{slug}_" if slug else ""
-        entity = f"{SENSOR_ITEM_PREFIX}{prefix}{item['slug']}"
+        entity = f"{SENSOR_ITEM_PREFIX}{item['slug']}"
         entry: dict = {"entity": entity, "name": item["name"][:40]}
         if secondary:
             entry["secondary_info"] = secondary
         return entry
 
     def _glance_item(item: dict) -> dict:
-        prefix = f"{slug}_" if slug else ""
         return {
-            "entity": f"{SENSOR_ITEM_PREFIX}{prefix}{item['slug']}",
+            "entity": f"{SENSOR_ITEM_PREFIX}{item['slug']}",
             "name": item["name"][:30],
         }
 
@@ -258,8 +256,7 @@ def _game_dashboard(slug: str, game: dict) -> dict:
     if pl_items:
         pl_entity_list: list[dict] = []
         for item in pl_items:
-            prefix = f"{slug}_" if slug else ""
-            entity_id = f"{SENSOR_ITEM_PREFIX}{prefix}{item['slug']}"
+            entity_id = f"{SENSOR_ITEM_PREFIX}{item['slug']}"
             pl_entity_list.append({"entity": entity_id, "name": item["name"][:40]})
             if item.get("roi") is not None:
                 pl_entity_list.append({
@@ -298,7 +295,7 @@ def _game_dashboard(slug: str, game: dict) -> dict:
         if float_items:
             float_list = []
             for item in float_items[:20]:
-                entity_id = f"{SENSOR_ITEM_PREFIX}cs2_{item['slug']}"
+                entity_id = f"{SENSOR_ITEM_PREFIX}{item['slug']}"
                 float_list.append({"entity": entity_id, "name": item["name"][:40]})
                 float_list.append({
                     "entity": entity_id,
@@ -378,7 +375,7 @@ def _watchlist_dashboard(watchlist: list[dict]) -> dict:
             {
                 "title": "Watchlist",
                 "icon": "mdi:eye",
-                "cards": cards or [{"type": "entity", "entity": "sensor.steam_sync_status"}],
+                "cards": cards or [{"type": "entity", "entity": SENSOR_SYNC_ID}],
             }
         ],
     }

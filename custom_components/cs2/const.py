@@ -17,9 +17,13 @@ DEFAULT_MAX_ITEMS = 0            # 0 = no cap
 DEFAULT_HISTORY_DAYS = 730       # 2 years of HA recorder statistics by default
 
 # ── Entity IDs ─────────────────────────────────────────────────────────────────
+# All IDs use "steam_inventory_" because has_entity_name=True + device "Steam Inventory"
+# causes HA to prepend the device slug to the entity name slug.
 SENSOR_TOTAL_ID = "sensor.steam_inventory_total"
-SENSOR_GAME_PREFIX = "sensor.steam_"   # + slug + "_total"
-SENSOR_ITEM_PREFIX = "sensor.steam_item_"
+SENSOR_GAME_PREFIX = "sensor.steam_inventory_"        # + slug + "_total"
+SENSOR_ITEM_PREFIX = "sensor.steam_inventory_"        # + make_slug(market_hash_name)
+SENSOR_SYNC_ID = "sensor.steam_inventory_sync_status"
+SENSOR_WATCHLIST_PREFIX = "sensor.steam_inventory_"   # + make_slug(market_hash_name)
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "cs2_inventory_state"

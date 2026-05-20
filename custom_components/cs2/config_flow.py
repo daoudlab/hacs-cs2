@@ -37,19 +37,22 @@ _STEAM_ID_RE = re.compile(r"^\d{17}$")
 
 def _test_steam_connection(steam_id: str) -> str:
     """Quick probe of Steam inventory — returns a status string."""
-    import httpx
+    import urllib.request
+    import json as _json
     from .const import HEADERS
     url = STEAM_INVENTORY_URL.format(steam_id=steam_id, appid=730, contextid=2) + "&count=1"
     try:
-        resp = httpx.get(url, headers=HEADERS, timeout=8)
-        if resp.status_code == 200:
-            count = resp.json().get("total_inventory_count", 0)
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            count = _json.loads(body).get("total_inventory_count", 0)
             return f"✅ Connecté — {count} items CS2 détectés"
-        if resp.status_code == 403:
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
             return "⚠️ Inventaire privé — rendez-le public pour le tracking"
-        if resp.status_code == 429:
+        if e.code == 429:
             return "⚠️ Rate-limited par Steam — l'intégration fonctionnera quand même"
-        return f"⚠️ HTTP {resp.status_code} — vérifiez le Steam ID"
+        return f"⚠️ HTTP {e.code} — vérifiez le Steam ID"
     except Exception:
         return "⚠️ Steam inaccessible — l'intégration fonctionnera quand le réseau sera disponible"
 
@@ -97,10 +100,10 @@ STEP_SETTINGS_SCHEMA = vol.Schema(
             vol.Coerce(float), vol.Range(min=0.0)
         ),
         vol.Optional(CONF_MAX_ITEMS, default=DEFAULT_MAX_ITEMS): vol.All(
-            int, vol.Range(min=0)
+            vol.Coerce(int), vol.Range(min=0)
         ),
         vol.Optional(CONF_HISTORY_DAYS, default=DEFAULT_HISTORY_DAYS): vol.All(
-            int, vol.Range(min=30, max=3650)
+            vol.Coerce(int), vol.Range(min=30, max=3650)
         ),
         vol.Optional(CONF_INCLUDE_TRADING_CARDS, default=False): bool,
         vol.Optional(CONF_FETCH_FLOATS, default=False): bool,

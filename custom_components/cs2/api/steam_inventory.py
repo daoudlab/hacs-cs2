@@ -41,6 +41,10 @@ class InventoryFetchError(Exception):
     """Transient or hard failure fetching the inventory."""
 
 
+class InventoryBannedError(InventoryFetchError):
+    """Steam returned 401 — IP soft-ban, cooldown required before retry."""
+
+
 class _Resp:
     """Minimal response wrapper around urllib so callers stay unchanged."""
     def __init__(self, status_code: int, body: bytes = b"") -> None:
@@ -144,9 +148,9 @@ def fetch_inventory(
                 time.sleep(30)
             continue
         if resp.status_code == 401:
-            # Temporary IP soft-ban — let coordinator fall back to stale data
+            # Temporary IP soft-ban — coordinator will apply cooldown and fall back to stale data
             _LOGGER.warning("Inventory 401 for %s (IP rate-limited?) — %d items fetched so far", steam_id, len(items))
-            raise InventoryFetchError(f"Steam inventory 401 (IP banned?) after {len(items)} items")
+            raise InventoryBannedError(f"Steam inventory 401 (IP banned?) after {len(items)} items")
         if resp.status_code != 200:
             raise InventoryFetchError(
                 f"Steam inventory returned HTTP {resp.status_code}"
