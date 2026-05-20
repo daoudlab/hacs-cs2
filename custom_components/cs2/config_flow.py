@@ -216,15 +216,13 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> "CS2OptionsFlow":
-        return CS2OptionsFlow(config_entry)
+        return CS2OptionsFlow()
 
 
 class CS2OptionsFlow(config_entries.OptionsFlow):
     """Handle options flow (re-configure after setup)."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        super().__init__()
-        self.config_entry = config_entry
+    # config_entry is injected as a read-only property by HA 2024.11+ — do not set in __init__
 
     async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
