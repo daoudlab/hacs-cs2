@@ -214,7 +214,12 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._float_cache = data.get("float_cache", {})
         self._alert_state = data.get("alert_state", {})
         self._price_timestamps = data.get("price_timestamps", {})
-        self._inv_cooldown = {k: float(v) for k, v in data.get("inv_cooldown", {}).items()}
+        # Merge: in-memory active bans win over stored values within the same session.
+        # On cold restart _inv_cooldown starts empty, so stored values are authoritative.
+        stored_cd = {k: float(v) for k, v in data.get("inv_cooldown", {}).items()}
+        now_ts = time.time()
+        active_mem = {k: v for k, v in self._inv_cooldown.items() if v > now_ts}
+        self._inv_cooldown = {**stored_cd, **active_mem}
         if self._stale_data is None:
             self._stale_data = _result_from_json(data.get("last_coordinator_result"))
 
@@ -255,6 +260,17 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             _LOGGER.error("Failed to persist coordinator state: %s", err)
 
+    async def _async_save_cooldown_now(self) -> None:
+        """Persist inv_cooldown (and opportunistically stale_data) without a full save."""
+        try:
+            data = await self._store.async_load() or {}
+            data["inv_cooldown"] = {k: v for k, v in self._inv_cooldown.items() if v > time.time()}
+            if self._stale_data and not data.get("last_coordinator_result"):
+                data["last_coordinator_result"] = _result_to_json(self._stale_data)
+            await self._store.async_save(data)
+        except Exception as err:
+            _LOGGER.warning("Failed to persist cooldown state: %s", err)
+
     # ── Core update ───────────────────────────────────────────────────────────
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -264,12 +280,18 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             result, save_payload = await self.hass.async_add_executor_job(self._sync_cycle)
             if result is None:
-                # All games skipped — return last known data (in-memory or persisted store)
+                # All games skipped (IP ban cooldown) — persist cooldown immediately
+                await self._async_save_cooldown_now()
                 fallback = self.data or self._stale_data
                 if fallback is not None:
                     _LOGGER.info("All games skipped — serving stale coordinator data")
                     return fallback
-                raise UpdateFailed("All games skipped and no stale data available")
+                # No stale data (e.g. ban during first-ever cycle) — return empty result
+                # so sensors show degraded state, not unavailable
+                _LOGGER.warning("All games skipped and no stale data — returning empty result")
+                minimal = _empty_result()
+                minimal["active_apps"] = list(self._active_apps)
+                return minimal
             if save_payload:
                 self._stale_data = result
                 await self._async_save_store(*save_payload)
