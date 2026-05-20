@@ -88,13 +88,13 @@ STEP_ACCOUNTS_SCHEMA = vol.Schema(
 STEP_SETTINGS_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
-            int, vol.Range(min=5, max=1440)
+            vol.Coerce(int), vol.Range(min=5, max=1440)
         ),
         vol.Optional(CONF_STRICT_MISSING_RATIO, default=DEFAULT_STRICT_RATIO): vol.All(
-            float, vol.Range(min=0.0, max=1.0)
+            vol.Coerce(float), vol.Range(min=0.0, max=1.0)
         ),
         vol.Optional(CONF_MIN_ITEM_VALUE, default=DEFAULT_MIN_VALUE): vol.All(
-            float, vol.Range(min=0.0)
+            vol.Coerce(float), vol.Range(min=0.0)
         ),
         vol.Optional(CONF_MAX_ITEMS, default=DEFAULT_MAX_ITEMS): vol.All(
             int, vol.Range(min=0)
@@ -244,23 +244,23 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(int, vol.Range(min=5, max=1440)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=1440)),
                 vol.Optional(
                     CONF_STRICT_MISSING_RATIO,
                     default=current.get(CONF_STRICT_MISSING_RATIO, DEFAULT_STRICT_RATIO),
-                ): vol.All(float, vol.Range(min=0.0, max=1.0)),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
                 vol.Optional(
                     CONF_MIN_ITEM_VALUE,
                     default=current.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE),
-                ): vol.All(float, vol.Range(min=0.0)),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
                 vol.Optional(
                     CONF_MAX_ITEMS,
                     default=current.get(CONF_MAX_ITEMS, DEFAULT_MAX_ITEMS),
-                ): vol.All(int, vol.Range(min=0)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0)),
                 vol.Optional(
                     CONF_HISTORY_DAYS,
                     default=current.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS),
-                ): vol.All(int, vol.Range(min=30, max=3650)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=30, max=3650)),
                 vol.Optional(
                     CONF_INCLUDE_TRADING_CARDS,
                     default=current.get(CONF_INCLUDE_TRADING_CARDS, False),
