@@ -282,6 +282,8 @@ class SteamSyncSensor(_SteamBase):
         if not data.get("active_apps"):
             return "no_games"
         stats = self.coordinator.last_cycle_stats
+        if stats.get("banned_accounts", 0) > 0:
+            return "rate_limited"
         items_count = stats.get("items_count", 0)
         missing_count = data.get("missing_count", 0)
         if items_count > 0 and missing_count > 0:
