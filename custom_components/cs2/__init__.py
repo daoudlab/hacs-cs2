@@ -24,7 +24,31 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor"]
 
 
+_ENTITY_ID_MIGRATIONS: dict[str, str] = {
+    # pre-has_entity_name (Round ≤4) → post-has_entity_name (Round 5+)
+    "sensor.steam_sync_status": "sensor.steam_inventory_sync_status",
+    "sensor.steam_cs2_total": "sensor.steam_inventory_cs2_total",
+    "sensor.steam_dota2_total": "sensor.steam_inventory_dota2_total",
+    "sensor.steam_tf2_total": "sensor.steam_inventory_tf2_total",
+    "sensor.steam_rust_total": "sensor.steam_inventory_rust_total",
+    "sensor.steam_inventory_total_total": "sensor.steam_inventory_total",
+}
+
+
+def _migrate_entity_registry(hass: HomeAssistant) -> None:
+    """Rename stale pre-migration entity IDs to the new has_entity_name format."""
+    from homeassistant.helpers import entity_registry as er
+    ent_reg = er.async_get(hass)
+    for old_id, new_id in _ENTITY_ID_MIGRATIONS.items():
+        entry = ent_reg.async_get(old_id)
+        if entry and not ent_reg.async_get(new_id):
+            ent_reg.async_update_entity(old_id, new_entity_id=new_id)
+            _LOGGER.info("Entity registry migration: %s → %s", old_id, new_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    _migrate_entity_registry(hass)
+
     coordinator = CS2Coordinator(hass, entry)
 
     # Pop the pending import cookie keyed by steam_ids (set during config flow step_import)

@@ -45,10 +45,6 @@ SERVICE_SET_BUY_PRICE = "set_buy_price"
 # ── Extra config keys ──────────────────────────────────────────────────────────
 CONF_FETCH_FLOATS = "fetch_floats"
 
-# ── Extra sensor IDs ──────────────────────────────────────────────────────────
-SENSOR_SYNC_ID = "sensor.steam_sync_status"
-SENSOR_WATCHLIST_PREFIX = "sensor.steam_watch_"
-
 # ── Extra JSON files (in /config/) ────────────────────────────────────────────
 WATCHLIST_FILE = "cs2_watchlist.json"
 TARGETS_FILE = "cs2_price_targets.json"

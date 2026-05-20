@@ -305,6 +305,7 @@ class SteamSyncSensor(_SteamBase):
             "stale_count": data.get("stale_count"),
             "missing_count": data.get("missing_count"),
             "last_update_success": self.coordinator.last_update_success,
+            "banned_accounts": stats.get("banned_accounts", 0),
         }
 
 
