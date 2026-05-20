@@ -140,8 +140,14 @@ async def _handle_run_import(call: ServiceCall) -> None:
     if not coordinators:
         _LOGGER.error("cs2.run_import: no active Steam Inventory entry found")
         return
-
     coordinator = coordinators[0]
+
+    # If no explicit start_date, derive from configured history_days retention
+    if not start_date:
+        from datetime import date as _date, timedelta as _timedelta
+        start_date = (_date.today() - _timedelta(days=coordinator.history_days)).isoformat()
+        _LOGGER.info("cs2.run_import: no start_date — using %s (history_days=%d)", start_date, coordinator.history_days)
+
     if coordinator._import_running:
         _LOGGER.warning("cs2.run_import: import already in progress — ignoring duplicate call")
         return

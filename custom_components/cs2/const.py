@@ -7,12 +7,14 @@ CONF_STRICT_MISSING_RATIO = "strict_missing_ratio"
 CONF_MIN_ITEM_VALUE = "min_item_value"
 CONF_MAX_ITEMS = "max_items"
 CONF_INCLUDE_TRADING_CARDS = "include_trading_cards"
+CONF_HISTORY_DAYS = "history_days"
 
 DEFAULT_SCAN_INTERVAL = 5        # minutes (rolling update: 5 items per cycle)
 DEFAULT_FETCH_CHUNK_SIZE = 5     # items fetched per cycle (~1 req/min average)
 DEFAULT_STRICT_RATIO = 0.30
 DEFAULT_MIN_VALUE = 0.0
 DEFAULT_MAX_ITEMS = 0            # 0 = no cap
+DEFAULT_HISTORY_DAYS = 730       # 2 years of HA recorder statistics by default
 
 # ── Entity IDs ─────────────────────────────────────────────────────────────────
 SENSOR_TOTAL_ID = "sensor.steam_inventory_total"

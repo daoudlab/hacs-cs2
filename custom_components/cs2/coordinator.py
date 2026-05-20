@@ -28,11 +28,13 @@ from .const import (
     CONF_MAX_ITEMS,
     CONF_INCLUDE_TRADING_CARDS,
     CONF_FETCH_FLOATS,
+    CONF_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FETCH_CHUNK_SIZE,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
+    DEFAULT_HISTORY_DAYS,
     KNOWN_MARKETABLE_APPS,
     STORAGE_KEY,
     STORAGE_VERSION,
@@ -147,6 +149,10 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def fetch_floats(self) -> bool:
         return bool(self._cfg.get(CONF_FETCH_FLOATS, False))
+
+    @property
+    def history_days(self) -> int:
+        return int(self._cfg.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS))
 
     @property
     def last_cycle_stats(self) -> dict[str, Any]:

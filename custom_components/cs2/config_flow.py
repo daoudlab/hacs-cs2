@@ -19,10 +19,12 @@ from .const import (
     CONF_MAX_ITEMS,
     CONF_INCLUDE_TRADING_CARDS,
     CONF_FETCH_FLOATS,
+    CONF_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
+    DEFAULT_HISTORY_DAYS,
     CONF_IMPORT_START_DATE,
     CONF_STEAM_COOKIE,
     STEAM_INVENTORY_URL,
@@ -97,6 +99,9 @@ STEP_SETTINGS_SCHEMA = vol.Schema(
         vol.Optional(CONF_MAX_ITEMS, default=DEFAULT_MAX_ITEMS): vol.All(
             int, vol.Range(min=0)
         ),
+        vol.Optional(CONF_HISTORY_DAYS, default=DEFAULT_HISTORY_DAYS): vol.All(
+            int, vol.Range(min=30, max=3650)
+        ),
         vol.Optional(CONF_INCLUDE_TRADING_CARDS, default=False): bool,
         vol.Optional(CONF_FETCH_FLOATS, default=False): bool,
     }
@@ -154,17 +159,24 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_import(self, user_input: dict | None = None) -> ConfigFlowResult:
         """Step 3 — optional historical import (cookie + start date)."""
+        from datetime import date as _date, timedelta as _timedelta
+
+        history_days: int = self._data.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS)
+        default_start = (_date.today() - _timedelta(days=history_days)).isoformat()
+
         errors: dict[str, str] = {}
         if user_input is not None:
             cookie = (user_input.get(CONF_STEAM_COOKIE) or "").strip()
             start_date = (user_input.get(CONF_IMPORT_START_DATE) or "").strip()
 
-            if start_date:
-                try:
-                    from datetime import date as _date
-                    _date.fromisoformat(start_date)
-                except ValueError:
-                    errors["base"] = "invalid_date"
+            # Empty start_date → use history_days-derived default
+            if not start_date:
+                start_date = default_start
+
+            try:
+                _date.fromisoformat(start_date)
+            except ValueError:
+                errors["base"] = "invalid_date"
 
             if not errors:
                 self._data[CONF_IMPORT_START_DATE] = start_date
@@ -191,7 +203,11 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={
-                "note": "Laissez le cookie vide pour ignorer l'import historique."
+                "note": (
+                    f"Laissez le cookie vide pour ignorer l'import historique. "
+                    f"Laissez la date vide pour importer depuis le {default_start} "
+                    f"({history_days} jours, selon votre rétention configurée)."
+                )
             },
         )
 
@@ -241,6 +257,10 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
                     CONF_MAX_ITEMS,
                     default=current.get(CONF_MAX_ITEMS, DEFAULT_MAX_ITEMS),
                 ): vol.All(int, vol.Range(min=0)),
+                vol.Optional(
+                    CONF_HISTORY_DAYS,
+                    default=current.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS),
+                ): vol.All(int, vol.Range(min=30, max=3650)),
                 vol.Optional(
                     CONF_INCLUDE_TRADING_CARDS,
                     default=current.get(CONF_INCLUDE_TRADING_CARDS, False),
