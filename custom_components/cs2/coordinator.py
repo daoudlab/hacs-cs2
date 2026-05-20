@@ -50,6 +50,40 @@ _DISCOVERY_INTERVAL = datetime.timedelta(days=7)
 _SNAPSHOT_KEEP_DAYS = 10
 
 
+def _result_to_json(result: dict) -> str | None:
+    """Serialize coordinator result payload for cold-restart persistence."""
+    try:
+        r = {
+            "global": result.get("global", {}),
+            "per_game": result.get("per_game", {}),
+            "items": result.get("items", []),
+            "active_apps": [list(a) for a in result.get("active_apps", [])],
+            "stale_count": result.get("stale_count", 0),
+            "missing_count": result.get("missing_count", 0),
+            "watchlist": result.get("watchlist", []),
+        }
+        return json.dumps(r, ensure_ascii=False, default=str)
+    except Exception:
+        return None
+
+
+def _result_from_json(raw: str | None) -> dict | None:
+    """Deserialize coordinator result payload from store."""
+    if not raw:
+        return None
+    try:
+        r = json.loads(raw)
+        r["active_apps"] = [tuple(a) for a in r.get("active_apps", [])]
+        items = r.get("items", [])
+        r["items_by_slug"] = {f"{i.get('game_slug')}__{i.get('slug')}": i for i in items}
+        watchlist = r.get("watchlist", [])
+        r["watchlist_by_slug"] = {w["slug"]: w for w in watchlist if w.get("slug")}
+        r["per_account"] = {}
+        return r
+    except Exception:
+        return None
+
+
 def _parse_steam_ids(raw: str) -> list[tuple[str, str]]:
     accounts = []
     for part in raw.split(","):
@@ -128,6 +162,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_cycle_stats: dict[str, Any] = {}
         self._alert_state: dict[str, str] = {}  # name → "high" | "low" | "none"
         self._inv_cooldown: dict[str, float] = {}  # steam_id → epoch when ban expires
+        self._stale_data: dict[str, Any] | None = None  # last successful result, persisted for cold-restart
         self._stop = threading.Event()
         self._import_running: bool = False
         self.config_entry = entry
@@ -180,6 +215,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alert_state = data.get("alert_state", {})
         self._price_timestamps = data.get("price_timestamps", {})
         self._inv_cooldown = {k: float(v) for k, v in data.get("inv_cooldown", {}).items()}
+        if self._stale_data is None:
+            self._stale_data = _result_from_json(data.get("last_coordinator_result"))
 
     async def _async_save_store(
         self,
@@ -212,6 +249,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "alert_state": dict(self._alert_state),
                     "price_timestamps": self._price_timestamps,
                     "inv_cooldown": {k: v for k, v in self._inv_cooldown.items() if v > time.time()},
+                    "last_coordinator_result": _result_to_json(self._stale_data),
                 }
             )
         except Exception as err:
@@ -225,16 +263,27 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_load_store()
         try:
             result, save_payload = await self.hass.async_add_executor_job(self._sync_cycle)
+            if result is None:
+                # All games skipped — return last known data (in-memory or persisted store)
+                fallback = self.data or self._stale_data
+                if fallback is not None:
+                    _LOGGER.info("All games skipped — serving stale coordinator data")
+                    return fallback
+                raise UpdateFailed("All games skipped and no stale data available")
             if save_payload:
+                self._stale_data = result
                 await self._async_save_store(*save_payload)
+            else:
+                self._stale_data = result
             return result
         except steam_inventory.InventoryPrivateError as err:
             raise UpdateFailed(f"Steam inventory private: {err}") from err
         except steam_inventory.InventoryFetchError as err:
-            # Transient IP ban — keep showing last known values instead of error state
+            # Transient fetch error — keep showing last known values
             _LOGGER.warning("Inventory fetch failed: %s — reusing stale data", err)
-            if self.data is not None:
-                return self.data
+            fallback = self.data or self._stale_data
+            if fallback is not None:
+                return fallback
             raise UpdateFailed(f"Steam inventory fetch error: {err}") from err
         except Exception as err:
             raise UpdateFailed(f"Cycle failed: {err}") from err
@@ -570,10 +619,13 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
                 all_items_flat.extend(items_data)
 
-            # If all games were skipped (IP ban), preserve last known coordinator state
+            # If all games were skipped (IP ban cooldown), signal caller to use stale data
             if not all_items_flat and active_apps and not self._stop.is_set():
-                _LOGGER.warning("All %d active games skipped this cycle (IP ban?) — will use stale coordinator data", len(active_apps))
-                raise steam_inventory.InventoryFetchError("All games skipped — using stale coordinator data")
+                _LOGGER.warning(
+                    "All %d active games skipped this cycle (IP ban cooldown) — returning None for stale fallback",
+                    len(active_apps),
+                )
+                return None, None
 
             # ── Watchlist prices ───────────────────────────────────────────────
             watchlist_prices: dict[str, float] = {}
