@@ -465,9 +465,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # can count quantity correctly per unique market_hash_name.
                 raw_items: list[dict] = []
                 accounts_ok = 0
+                accounts_in_cooldown = 0
                 for steam_id, account_name in self.accounts:
                     banned_until = self._inv_cooldown.get(steam_id, 0.0)
                     if time.time() < banned_until:
+                        accounts_in_cooldown += 1
                         remaining = int(banned_until - time.time())
                         _LOGGER.info(
                             "Skipping %s inventory (%s) — IP ban cooldown %ds remaining",
@@ -504,7 +506,10 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                             self._entity_pictures[item["market_hash_name"]] = pic
 
                 if accounts_ok == 0 and self.accounts:
-                    _LOGGER.warning("All %d accounts failed inventory for %s — skipping", len(self.accounts), game_name)
+                    if accounts_in_cooldown == len(self.accounts):
+                        _LOGGER.info("All %d accounts in cooldown for %s — skipping", len(self.accounts), game_name)
+                    else:
+                        _LOGGER.warning("All %d accounts failed inventory for %s — skipping", len(self.accounts), game_name)
                     continue
 
                 inventory = raw_items
