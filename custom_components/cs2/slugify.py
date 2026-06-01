@@ -22,6 +22,3 @@ def make_slug(name: str) -> str:
     return slug.lower().strip("_")
 
 
-def entity_id(name: str) -> str:
-    """Full entity_id, e.g. 'sensor.cs2_item_awp_redline_field_tested'."""
-    return f"sensor.cs2_item_{make_slug(name)}"

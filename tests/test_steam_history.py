@@ -56,6 +56,30 @@ class TestInterpolateGaps:
         assert str(val)[::-1].find(".") <= 4  # max 4 decimal places
 
 
+    def test_sparse_multiple_segments(self):
+        # Three known points with gaps between each — bisect must find correct bracket
+        hist = {"2024-01-01": 10.0, "2024-01-06": 20.0, "2024-01-11": 10.0}
+        result = interpolate_gaps(hist)
+        # Mid-point of first segment: day 3 → 14.0
+        assert result["2024-01-03"] == pytest.approx(14.0, abs=0.01)
+        # Mid-point of second segment: day 8 → 16.0
+        assert result["2024-01-08"] == pytest.approx(16.0, abs=0.01)
+        # All 11 days must be present
+        assert len(result) == 11
+
+    def test_large_sparse_correctness(self):
+        # 100-day range with linear price 0→100: each day i → price i.0
+        from datetime import date, timedelta
+        d0 = date(2024, 1, 1)
+        d100 = d0 + timedelta(days=100)
+        hist = {d0.isoformat(): 0.0, d100.isoformat(): 100.0}
+        result = interpolate_gaps(hist)
+        assert len(result) == 101
+        for i in range(101):
+            ds = (d0 + timedelta(days=i)).isoformat()
+            assert result[ds] == pytest.approx(float(i), abs=0.01)
+
+
 class TestDecodeCookie:
     def test_plain_value(self):
         assert _decode_cookie("abc123") == "abc123"

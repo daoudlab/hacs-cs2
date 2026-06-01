@@ -56,8 +56,6 @@ def compute_item_metrics(
         ref = reference_prices.get(name, 0.0)
         prev = previous_prices.get(name)
 
-        if 0 < buy < 0.50:
-            _LOGGER.warning("Low buy_price %.2f for %s — ROI may be misleading", buy, name)
         roi = (
             round(((current - buy) / buy) * 100, 2)
             if buy >= 0.10 and current is not None
@@ -137,7 +135,7 @@ def compute_global_metrics(
 
     items_with_roi = [item for item in items_data if item["roi"] is not None]
     best = max(items_with_roi, key=lambda x: x["roi"], default=None)
-    worst = min(items_with_roi, key=lambda x: x["roi"], default=None)
+    worst = min(items_with_roi, key=lambda x: x["roi"], default=None) if len(items_with_roi) > 1 else None
 
     return {
         "total_value": round(total_value, 2),

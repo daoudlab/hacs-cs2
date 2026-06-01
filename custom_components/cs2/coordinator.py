@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import steam_inventory, steam_market
-from .api.steam_inventory import InventoryBannedError
+from .api.steam_inventory import InventoryBannedError, InventoryRateLimitedError
 from .api.steam_market import RateLimits
 from .compute import compute_item_metrics, compute_global_metrics
 from .const import (
@@ -53,6 +53,9 @@ _LOGGER = logging.getLogger(__name__)
 _DISCOVERY_INTERVAL = datetime.timedelta(days=7)
 _SNAPSHOT_KEEP_DAYS = 10
 
+# Market 429 backoff schedule (minutes): 5 → 15 → 30 → 60 (capped)
+_MARKET_RL_BACKOFF_MINUTES = [5, 15, 30, 60]
+
 
 class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Fetches Steam inventories + prices for all detected games."""
@@ -80,14 +83,28 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_cycle_stats: dict[str, Any] = {}
         self._alert_state: dict[str, str] = {}
         self._inv_cooldown: dict[str, float] = {}
+        self._market_rl_until: float = 0.0
+        self._market_rl_consecutive: int = 0
         self._stale_data: dict[str, Any] | None = None
         self._stop = threading.Event()
         self._import_running: bool = False
+        self._import_progress: dict[str, Any] = {}
         self.config_entry = entry
 
     def stop(self) -> None:
         """Signal running executor thread to stop sleeping."""
         self._stop.set()
+
+    @property
+    def _device_unique_id(self) -> str:
+        """Stable device identifier derived from configured Steam IDs.
+
+        Using a hash of steam_ids instead of entry_id means the same Steam
+        account always maps to the same HA device, even after a reinstall.
+        """
+        import hashlib
+        raw = self._cfg.get(CONF_STEAM_IDS, "").strip()
+        return hashlib.md5(raw.encode()).hexdigest()[:16] if raw else self.config_entry.entry_id
 
     @property
     def accounts(self) -> list[tuple[str, str]]:
@@ -127,6 +144,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alert_state = loaded["alert_state"]
         self._price_tracker.load_timestamps(loaded["price_timestamps"])
         self._inv_cooldown = loaded["inv_cooldown"]
+        self._market_rl_until = loaded["market_rl_until"]
+        self._market_rl_consecutive = loaded["market_rl_consecutive"]
         if self._stale_data is None:
             self._stale_data = loaded["stale_data"]
 
@@ -159,11 +178,18 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             price_timestamps=self._price_tracker.timestamps,
             inv_cooldown=self._inv_cooldown,
             stale_data=self._stale_data,
+            market_rl_until=self._market_rl_until,
+            market_rl_consecutive=self._market_rl_consecutive,
         )
 
     async def _async_save_cooldown_now(self) -> None:
-        """Persist inv_cooldown and opportunistically stale_data (fast-path)."""
-        await self._cs2_store.async_save_cooldown(self._inv_cooldown, self._stale_data)
+        """Persist cooldowns and opportunistically stale_data (fast-path)."""
+        await self._cs2_store.async_save_cooldown(
+            self._inv_cooldown,
+            self._stale_data,
+            market_rl_until=self._market_rl_until,
+            market_rl_consecutive=self._market_rl_consecutive,
+        )
 
     # ── Core update ───────────────────────────────────────────────────────────
 
@@ -228,13 +254,20 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 count = steam_inventory.check_inventory_count(
                     http, steam_id, appid, contextid, stop=self._stop
                 )
+                if count == -1:
+                    # 429 during discovery — abort immediately to avoid ban escalation
+                    _LOGGER.warning(
+                        "Discovery rate-limited (429) — aborting, preserving %d cached apps",
+                        len(self._active_apps),
+                    )
+                    return list(self._active_apps) if self._active_apps else list(active.values())
                 if count > 0:
                     active[slug] = (appid, contextid, slug, game_name)
                     _LOGGER.info(
                         "Discovery: found %s (appid=%d, %d items)",
                         game_name, appid, count,
                     )
-                if self._stop.wait(0.5):
+                if self._stop.wait(3.0):
                     _LOGGER.info("Discovery interrupted — preserving cached apps")
                     return list(self._active_apps) if self._active_apps else list(active.values())
 
@@ -346,6 +379,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             total_missing = 0
             cycle_asset_ids: set[str] = set()  # track for float_cache pruning
 
+            # Market rate-limit state for this cycle
+            market_rl_active = time.time() < self._market_rl_until
+            market_rl_initially_active = market_rl_active
+            cycle_had_market_429 = False
+
             for appid, contextid, slug, game_name in active_apps:
                 if self._stop.is_set():
                     break
@@ -375,6 +413,15 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._inv_cooldown[steam_id] = cooldown_until
                         _LOGGER.warning(
                             "Inventory 401 for %s (%s) — 1h cooldown until %s",
+                            account_name, game_name,
+                            time.strftime("%H:%M", time.localtime(cooldown_until)),
+                        )
+                        continue
+                    except InventoryRateLimitedError:
+                        cooldown_until = time.time() + 900  # 15 min (shorter than 401 ban)
+                        self._inv_cooldown[steam_id] = cooldown_until
+                        _LOGGER.warning(
+                            "Inventory 429 for %s (%s) — 15 min cooldown until %s",
                             account_name, game_name,
                             time.strftime("%H:%M", time.localtime(cooldown_until)),
                         )
@@ -438,9 +485,30 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
                 # ── Rolling price fetch (via RollingPriceFetcher) ──────────────
-                fresh_chunk = self._price_tracker.fetch(
-                    http, names_to_fetch, limits, self._stop, appid
-                )
+                if not market_rl_active:
+                    fresh_chunk, circuit_broken = self._price_tracker.fetch(
+                        http, names_to_fetch, limits, self._stop, appid
+                    )
+                    if circuit_broken:
+                        cycle_had_market_429 = True
+                        market_rl_active = True  # skip remaining games this cycle
+                        idx = min(self._market_rl_consecutive, len(_MARKET_RL_BACKOFF_MINUTES) - 1)
+                        cooldown_min = _MARKET_RL_BACKOFF_MINUTES[idx]
+                        self._market_rl_until = time.time() + cooldown_min * 60
+                        self._market_rl_consecutive += 1
+                        _LOGGER.warning(
+                            "Market 429 (consecutive hit #%d) — pausing market fetches for %d min (until ~%s)",
+                            self._market_rl_consecutive,
+                            cooldown_min,
+                            time.strftime("%H:%M", time.localtime(self._market_rl_until)),
+                        )
+                else:
+                    fresh_chunk = {}
+                    remaining_s = int(self._market_rl_until - time.time())
+                    _LOGGER.info(
+                        "Market rate-limited (%ds remaining) — skipping price fetch for %s",
+                        remaining_s, game_name,
+                    )
 
                 # Build prices dict: current_prices as baseline, fresh override
                 prices: dict[str, float] = {
@@ -496,6 +564,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         item["entity_picture"] = self._entity_pictures.get(item["name"])
                     item["game_slug"] = slug
                     item["game_name"] = game_name
+                    item["appid"] = appid
 
                 if min_val > 0:
                     items_data = [
@@ -538,6 +607,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
             # price_timestamps: keep only active inventory + watchlist names
             self._price_tracker.prune(active_names | watchlist_names_set)
+            # current_prices: prune items removed from inventory and watchlist
+            keep_names = active_names | watchlist_names_set | set(buy_prices) | set(reference_prices)
+            self._current_prices = {k: v for k, v in self._current_prices.items() if k in keep_names}
             # float_cache: keep only asset_ids seen in this cycle
             if cycle_asset_ids:
                 self._float_cache = {
@@ -556,12 +628,30 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if "market_hash_name" in w
                 and w["market_hash_name"] not in all_fresh_prices
             ]
-            if watchlist_fetch_names and not self._stop.is_set():
-                watchlist_prices = steam_market.fetch_prices_parallel(
+            if watchlist_fetch_names and not self._stop.is_set() and not market_rl_active:
+                wl_prices, wl_circuit_broken = steam_market.fetch_prices_parallel(
                     http, watchlist_fetch_names,
                     limits=limits, stop=self._stop, app_id=730,
                 )
+                if wl_circuit_broken and not cycle_had_market_429:
+                    cycle_had_market_429 = True
+                    idx = min(self._market_rl_consecutive, len(_MARKET_RL_BACKOFF_MINUTES) - 1)
+                    cooldown_min = _MARKET_RL_BACKOFF_MINUTES[idx]
+                    self._market_rl_until = time.time() + cooldown_min * 60
+                    self._market_rl_consecutive += 1
+                    _LOGGER.warning(
+                        "Market 429 on watchlist (consecutive hit #%d) — pausing for %d min",
+                        self._market_rl_consecutive, cooldown_min,
+                    )
+                watchlist_prices = wl_prices
                 all_fresh_prices.update(watchlist_prices)
+
+            # Reset market RL consecutive counter after a fully clean cycle
+            if not market_rl_initially_active and not cycle_had_market_429:
+                if self._market_rl_consecutive > 0:
+                    _LOGGER.info("Market rate-limit lifted — resetting backoff counter")
+                self._market_rl_consecutive = 0
+                self._market_rl_until = 0.0
 
             # ── Price threshold alerts ─────────────────────────────────────────
             if price_targets:
@@ -596,6 +686,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "cycle_duration_s": cycle_duration,
             "last_update": dt_util.now().isoformat(),
             "banned_accounts": len(banned_accounts),
+            "market_rl_until": self._market_rl_until,
+            "market_rl_consecutive": self._market_rl_consecutive,
         }
 
         _LOGGER.info(

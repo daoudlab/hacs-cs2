@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from custom_components.cs2.slugify import make_slug, entity_id
+from custom_components.cs2.slugify import make_slug
 
 
 class TestMakeSlug:
@@ -43,8 +43,3 @@ class TestMakeSlug:
         assert make_slug("Desert Eagle | 1911 (Minimal Wear)") == "desert_eagle_1911_minimal_wear"
 
 
-class TestEntityId:
-    def test_prefixed(self):
-        eid = entity_id("AWP | Redline (Field-Tested)")
-        assert eid.startswith("sensor.cs2_item_")
-        assert eid == "sensor.cs2_item_awp_redline_field_tested"

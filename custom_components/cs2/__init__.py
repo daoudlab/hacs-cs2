@@ -1,10 +1,13 @@
 """Steam Inventory — Home Assistant custom integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import time as _time
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     DOMAIN,
@@ -17,11 +20,17 @@ from .const import (
     SERVICE_GENERATE_DASHBOARDS,
     SERVICE_FORCE_REFRESH,
     SERVICE_SET_BUY_PRICE,
+    SERVICE_WATCHLIST_ADD,
+    SERVICE_WATCHLIST_REMOVE,
+    WATCHLIST_FILE,
 )
 from .coordinator import CS2Coordinator
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor"]
+
+_BUY_PRICE_WRITE_LOCK = asyncio.Lock()
+_WATCHLIST_WRITE_LOCK = asyncio.Lock()
 
 
 _ENTITY_ID_MIGRATIONS: dict[str, str] = {
@@ -32,6 +41,15 @@ _ENTITY_ID_MIGRATIONS: dict[str, str] = {
     "sensor.steam_tf2_total": "sensor.steam_inventory_tf2_total",
     "sensor.steam_rust_total": "sensor.steam_inventory_rust_total",
     "sensor.steam_inventory_total_total": "sensor.steam_inventory_total",
+    # Round 5: HA name-slugification mismatch — "Dota 2 Total" → "dota_2_total" (underscore
+    # before digit) but slug is "dota2".  Explicit entity_id from Round 6+ uses the slug.
+    "sensor.steam_inventory_dota_2_total": "sensor.steam_inventory_dota2_total",
+    "sensor.steam_inventory_payday_2_total": "sensor.steam_inventory_payday2_total",
+    "sensor.steam_inventory_dont_starve_together_total": "sensor.steam_inventory_dst_total",
+    "sensor.steam_inventory_killing_floor_2_total": "sensor.steam_inventory_kf2_total",
+    "sensor.steam_inventory_primal_carnage_extinction_total": "sensor.steam_inventory_primal_carnage_total",
+    "sensor.steam_inventory_naraka_bladepoint_total": "sensor.steam_inventory_naraka_total",
+    "sensor.steam_inventory_golf_with_your_friends_total": "sensor.steam_inventory_golf_friends_total",
 }
 
 
@@ -115,6 +133,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_WATCHLIST_ADD):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_WATCHLIST_ADD,
+            _handle_watchlist_add,
+            schema=vol.Schema(
+                {
+                    vol.Required("market_hash_name"): str,
+                    vol.Optional("target_price"): vol.Any(
+                        vol.All(vol.Coerce(float), vol.Range(min=0, max=1_000_000)),
+                        None,
+                    ),
+                    vol.Optional("note", default=""): str,
+                    vol.Optional("appid", default=730): vol.All(
+                        vol.Coerce(int), vol.Range(min=1)
+                    ),
+                }
+            ),
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_WATCHLIST_REMOVE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_WATCHLIST_REMOVE,
+            _handle_watchlist_remove,
+            schema=vol.Schema({vol.Required("market_hash_name"): str}),
+        )
+
     return True
 
 
@@ -127,7 +173,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
     if not hass.data.get(DOMAIN):
         for svc in (SERVICE_RUN_IMPORT, SERVICE_GENERATE_DASHBOARDS,
-                    SERVICE_FORCE_REFRESH, SERVICE_SET_BUY_PRICE):
+                    SERVICE_FORCE_REFRESH, SERVICE_SET_BUY_PRICE,
+                    SERVICE_WATCHLIST_ADD, SERVICE_WATCHLIST_REMOVE):
             hass.services.async_remove(DOMAIN, svc)
     return ok
 
@@ -142,12 +189,10 @@ async def _handle_run_import(call: ServiceCall) -> None:
     # Require admin — this service accepts a Steam session cookie
     # Block automation/system calls with no user context (user_id=None)
     if not call.context.user_id:
-        _LOGGER.error("cs2.run_import: user context required (cannot call from automation without user)")
-        return
+        raise HomeAssistantError("cs2.run_import: user context required (cannot call from automation without user)")
     user = await hass.auth.async_get_user(call.context.user_id)
     if not user or not user.is_admin:
-        _LOGGER.error("cs2.run_import: admin access required")
-        return
+        raise HomeAssistantError("cs2.run_import: admin access required")
 
     cookie = call.data[CONF_STEAM_COOKIE].strip()
     start_date = call.data.get(CONF_IMPORT_START_DATE, "").strip() or None
@@ -156,14 +201,12 @@ async def _handle_run_import(call: ServiceCall) -> None:
             from datetime import date as _date
             _date.fromisoformat(start_date)
         except ValueError:
-            _LOGGER.error("cs2.run_import: invalid start_date format (expected YYYY-MM-DD): %s", start_date)
-            return
+            raise HomeAssistantError(f"cs2.run_import: invalid start_date format (expected YYYY-MM-DD): {start_date}")
     min_value = float(call.data.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE))
 
-    coordinators = list(hass.data.get(DOMAIN, {}).values())
+    coordinators = [v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, CS2Coordinator)]
     if not coordinators:
-        _LOGGER.error("cs2.run_import: no active Steam Inventory entry found")
-        return
+        raise HomeAssistantError("cs2.run_import: no active Steam Inventory entry found")
     coordinator = coordinators[0]
 
     # If no explicit start_date, derive from configured history_days retention
@@ -173,11 +216,9 @@ async def _handle_run_import(call: ServiceCall) -> None:
         _LOGGER.info("cs2.run_import: no start_date — using %s (history_days=%d)", start_date, coordinator.history_days)
 
     if coordinator._import_running:
-        _LOGGER.warning("cs2.run_import: import already in progress — ignoring duplicate call")
-        return
+        raise HomeAssistantError("cs2.run_import: import already in progress")
     if not coordinator.data:
-        _LOGGER.warning("cs2.run_import: no data yet — wait for first scan cycle")
-        return
+        raise HomeAssistantError("cs2.run_import: no data yet — wait for first scan cycle")
 
     coordinator._import_running = True
     hass.async_create_task(
@@ -195,17 +236,58 @@ async def _run_import(
 ) -> None:
     from .importer import async_run_import
 
+    # Wait for first coordinator refresh to complete (covers first-install race)
+    deadline = _time.monotonic() + 300  # max 5 minutes
+    while not coordinator.data:
+        if _time.monotonic() > deadline or (stop and stop.is_set()):
+            _LOGGER.warning("cs2 import: timed out waiting for coordinator data — skipping")
+            coordinator._import_running = False
+            return
+        await asyncio.sleep(10)
+
     items = (coordinator.data or {}).get("items", [])
     if not items:
         _LOGGER.warning("cs2 import: no items in coordinator data, skipping")
         coordinator._import_running = False
         return
 
+    start = _time.monotonic()
+    coordinator._import_progress = {
+        "running": True, "fetched": 0, "total": len(items), "skipped": 0, "elapsed_s": 0
+    }
+
+    def _progress_cb(fetched: int, total: int, skipped: int) -> None:
+        progress = {
+            "running": True,
+            "fetched": fetched,
+            "total": total,
+            "skipped": skipped,
+            "elapsed_s": int(_time.monotonic() - start),
+        }
+        hass.loop.call_soon_threadsafe(
+            setattr, coordinator, "_import_progress", progress
+        )
+
+    result: dict = {}
     try:
-        result = await async_run_import(hass, items, cookie, start_date, min_value, stop=stop)
+        result = await async_run_import(
+            hass, items, cookie, start_date, min_value, stop=stop, progress_cb=_progress_cb
+        )
         _LOGGER.info("cs2 import finished: %s", result)
+        coordinator._import_progress = {
+            "running": False,
+            "fetched": result.get("fetched", 0),
+            "total": len(items),
+            "skipped": result.get("skipped", 0),
+            "elapsed_s": int(_time.monotonic() - start),
+        }
     except Exception as err:
         _LOGGER.error("cs2 import failed: %s", err)
+        coordinator._import_progress = {
+            "running": False,
+            "error": str(err),
+            "elapsed_s": int(_time.monotonic() - start),
+        }
     finally:
         coordinator._import_running = False
 
@@ -213,14 +295,13 @@ async def _run_import(
 async def _handle_generate_dashboards(call: ServiceCall) -> None:
     hass = call.hass
     if not call.context.user_id:
-        _LOGGER.error("cs2.generate_dashboards: user context required"); return
+        raise HomeAssistantError("cs2.generate_dashboards: user context required")
     user = await hass.auth.async_get_user(call.context.user_id)
     if not user or not user.is_admin:
-        _LOGGER.error("cs2.generate_dashboards: admin access required"); return
-    coordinators = list(hass.data.get(DOMAIN, {}).values())
+        raise HomeAssistantError("cs2.generate_dashboards: admin access required")
+    coordinators = [v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, CS2Coordinator)]
     if not coordinators or not coordinators[0].data:
-        _LOGGER.warning("cs2.generate_dashboards: no data yet")
-        return
+        raise HomeAssistantError("cs2.generate_dashboards: no data yet — wait for first scan cycle")
 
     coordinator = coordinators[0]
     await hass.async_add_executor_job(
@@ -245,12 +326,13 @@ async def _handle_force_refresh(call) -> None:
     """Trigger an immediate coordinator refresh."""
     hass = call.hass
     if not call.context.user_id:
-        _LOGGER.error("cs2.force_refresh: user context required"); return
+        raise HomeAssistantError("cs2.force_refresh: user context required")
     user = await hass.auth.async_get_user(call.context.user_id)
     if not user or not user.is_admin:
-        _LOGGER.error("cs2.force_refresh: admin access required"); return
+        raise HomeAssistantError("cs2.force_refresh: admin access required")
     for coordinator in hass.data.get(DOMAIN, {}).values():
-        await coordinator.async_request_refresh()
+        if isinstance(coordinator, CS2Coordinator):
+            await coordinator.async_request_refresh()
     _LOGGER.info("cs2.force_refresh: triggered")
 
 
@@ -260,10 +342,10 @@ async def _handle_set_buy_price(call) -> None:
     from pathlib import Path
     hass = call.hass
     if not call.context.user_id:
-        _LOGGER.error("cs2.set_buy_price: user context required"); return
+        raise HomeAssistantError("cs2.set_buy_price: user context required")
     user = await hass.auth.async_get_user(call.context.user_id)
     if not user or not user.is_admin:
-        _LOGGER.error("cs2.set_buy_price: admin access required"); return
+        raise HomeAssistantError("cs2.set_buy_price: admin access required")
     name = call.data["market_hash_name"].strip()
     price = call.data.get("price")
     config_dir = hass.config.config_dir
@@ -282,8 +364,100 @@ async def _handle_set_buy_price(call) -> None:
         else:
             data[name] = round(float(price), 2)
             _LOGGER.info("cs2.set_buy_price: set %s = %.2f EUR", name, float(price))
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        # Atomic write: write to .tmp then replace to prevent data loss on concurrent calls
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        tmp_path.replace(path)
 
-    await hass.async_add_executor_job(_write)
+    async with _BUY_PRICE_WRITE_LOCK:
+        await hass.async_add_executor_job(_write)
     for coordinator in hass.data.get(DOMAIN, {}).values():
-        await coordinator.async_request_refresh()
+        if isinstance(coordinator, CS2Coordinator):
+            await coordinator.async_request_refresh()
+
+
+async def _handle_watchlist_add(call) -> None:
+    """Add or update an item in cs2_watchlist.json."""
+    import json
+    from pathlib import Path
+    hass = call.hass
+    if not call.context.user_id:
+        raise HomeAssistantError("cs2.watchlist_add: user context required")
+    user = await hass.auth.async_get_user(call.context.user_id)
+    if not user or not user.is_admin:
+        raise HomeAssistantError("cs2.watchlist_add: admin access required")
+
+    name = call.data["market_hash_name"].strip()
+    target_price = call.data.get("target_price")
+    note = (call.data.get("note") or "").strip()
+    appid = int(call.data.get("appid", 730))
+    path = Path(hass.config.config_dir) / WATCHLIST_FILE
+
+    def _write() -> None:
+        items: list = []
+        if path.exists():
+            try:
+                items = json.loads(path.read_text())
+            except Exception as err:
+                _LOGGER.warning("watchlist unreadable, starting fresh: %s", err)
+        entry: dict = {"market_hash_name": name, "appid": appid}
+        if target_price is not None:
+            entry["target_price"] = round(float(target_price), 2)
+        if note:
+            entry["note"] = note
+        existing_idx = next(
+            (i for i, w in enumerate(items) if w.get("market_hash_name") == name), None
+        )
+        if existing_idx is not None:
+            items[existing_idx] = entry
+            _LOGGER.info("cs2.watchlist_add: updated %s", name)
+        else:
+            items.append(entry)
+            _LOGGER.info("cs2.watchlist_add: added %s", name)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False))
+        tmp.replace(path)
+
+    async with _WATCHLIST_WRITE_LOCK:
+        await hass.async_add_executor_job(_write)
+    for coordinator in hass.data.get(DOMAIN, {}).values():
+        if isinstance(coordinator, CS2Coordinator):
+            await coordinator.async_request_refresh()
+
+
+async def _handle_watchlist_remove(call) -> None:
+    """Remove an item from cs2_watchlist.json."""
+    import json
+    from pathlib import Path
+    hass = call.hass
+    if not call.context.user_id:
+        raise HomeAssistantError("cs2.watchlist_remove: user context required")
+    user = await hass.auth.async_get_user(call.context.user_id)
+    if not user or not user.is_admin:
+        raise HomeAssistantError("cs2.watchlist_remove: admin access required")
+
+    name = call.data["market_hash_name"].strip()
+    path = Path(hass.config.config_dir) / WATCHLIST_FILE
+
+    def _write() -> None:
+        if not path.exists():
+            return
+        try:
+            items = json.loads(path.read_text())
+        except Exception:
+            return
+        before = len(items)
+        items = [w for w in items if w.get("market_hash_name") != name]
+        if len(items) < before:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False))
+            tmp.replace(path)
+            _LOGGER.info("cs2.watchlist_remove: removed %s", name)
+        else:
+            _LOGGER.warning("cs2.watchlist_remove: %s not found in watchlist", name)
+
+    async with _WATCHLIST_WRITE_LOCK:
+        await hass.async_add_executor_job(_write)
+    for coordinator in hass.data.get(DOMAIN, {}).values():
+        if isinstance(coordinator, CS2Coordinator):
+            await coordinator.async_request_refresh()

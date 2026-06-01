@@ -15,7 +15,6 @@ import re
 import time
 import urllib.error
 import urllib.request
-import xml.etree.ElementTree as ET
 from typing import Any
 
 import httpx  # kept for type hints in coordinator; not used for requests here
@@ -24,7 +23,6 @@ from ..const import (
     HEADERS,
     INVENTORY_PAGE_DELAY,
     STEAM_INVENTORY_URL,
-    STEAM_PROFILE_XML_URL,
 )
 
 _DEFAULT_APP_ID = 730   # CS2 — callers always pass app_id explicitly
@@ -43,6 +41,10 @@ class InventoryFetchError(Exception):
 
 class InventoryBannedError(InventoryFetchError):
     """Steam returned 401 — IP soft-ban, cooldown required before retry."""
+
+
+class InventoryRateLimitedError(InventoryFetchError):
+    """Steam returned 429 on inventory after retries — short cooldown required."""
 
 
 class _Resp:
@@ -78,7 +80,7 @@ def check_inventory_count(
     context_id: int,
     stop=None,
 ) -> int:
-    """Return total_inventory_count for a game, 0 on error / private / empty."""
+    """Return total_inventory_count for a game, 0 on error/private/empty, -1 on 429."""
     url = STEAM_INVENTORY_URL.format(
         steam_id=steam_id, appid=app_id, contextid=context_id
     ) + "&count=1"
@@ -87,12 +89,12 @@ def check_inventory_count(
         if resp.status_code == 403:
             return 0  # private
         if resp.status_code == 429:
-            _LOGGER.debug("Rate limited during discovery for appid=%d, skipping", app_id)
+            _LOGGER.debug("Rate limited during discovery for appid=%d", app_id)
             if stop:
                 stop.wait(5)
             else:
                 time.sleep(5)
-            return 0
+            return -1  # sentinel: caller must abort discovery and preserve cached apps
         if resp.status_code != 200:
             return 0
         data = resp.json()
@@ -139,13 +141,19 @@ def fetch_inventory(
         if resp.status_code == 429:
             page_429_count += 1
             if page_429_count >= 3:
-                _LOGGER.warning("Rate limited on inventory %s — aborting after 3 attempts", steam_id)
-                break
-            _LOGGER.warning("Rate limited on inventory, waiting 30s (attempt %d/3)", page_429_count)
+                raise InventoryRateLimitedError(
+                    f"Steam inventory 429 after 3 attempts for {steam_id} ({len(items)} items fetched)"
+                )
+            # Exponential backoff: 15s first, 30s second, then raise
+            backoff = 15 * page_429_count
+            _LOGGER.warning(
+                "Rate limited on inventory, waiting %ds (attempt %d/3)",
+                backoff, page_429_count,
+            )
             if stop:
-                stop.wait(30)
+                stop.wait(backoff)
             else:
-                time.sleep(30)
+                time.sleep(backoff)
             continue
         if resp.status_code == 401:
             # Temporary IP soft-ban — coordinator will apply cooldown and fall back to stale data
@@ -205,7 +213,6 @@ def fetch_inventory(
                     "classid": asset.get("classid", ""),
                     "instanceid": asset.get("instanceid", ""),
                     "marketable": marketable,
-                    "is_skin": marketable,  # kept for backward-compat with coordinator
                 }
             )
 
@@ -234,23 +241,3 @@ def fetch_inventory(
     return items
 
 
-def fetch_persona_name(client: httpx.Client, steam_id: str) -> str | None:
-    """Public profile XML → display name. Best-effort."""
-    url = STEAM_PROFILE_XML_URL.format(steam_id=steam_id)
-    try:
-        resp = _get(url, timeout=10)
-        if resp.status_code != 200:
-            return None
-        upper_head = resp.text[:1000].upper()
-        if "<!DOCTYPE" in upper_head or "<!ENTITY" in upper_head:
-            _LOGGER.warning(
-                "Unexpected DOCTYPE/ENTITY in Steam profile XML for %s — skipping", steam_id
-            )
-            return None
-        root = ET.fromstring(resp.text)
-        name_el = root.find("steamID")
-        if name_el is not None and name_el.text:
-            return name_el.text.strip()
-    except Exception as err:
-        _LOGGER.warning("Persona fetch failed for %s: %s", steam_id, err)
-    return None

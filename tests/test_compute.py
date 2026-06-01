@@ -178,8 +178,9 @@ class TestComputeGlobalMetrics:
 
     def test_worst_performer_none_when_one_item_has_roi(self):
         m = compute_global_metrics(self._items(), previous_total=None)
-        # Only A has ROI, so best and worst are both A
-        assert m["worst_performer_name"] == "A"
+        # Only one item with ROI — worst_performer is None to avoid showing same item twice
+        assert m["worst_performer_name"] is None
+        assert m["worst_performer_roi"] is None
 
     def test_empty_inventory(self):
         m = compute_global_metrics([], previous_total=None)

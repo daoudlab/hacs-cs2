@@ -52,16 +52,17 @@ class RollingPriceFetcher:
         limits: RateLimits,
         stop: threading.Event | None,
         app_id: int,
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], bool]:
         """Fetch prices for the ``chunk_size`` stalest items from ``names_to_fetch``.
 
         Updates internal timestamps for every attempted item (even those that
         returned None) so they rotate out of the priority queue.
 
-        Returns the dict of freshly fetched {name: price}.
+        Returns (prices, circuit_broken) where circuit_broken=True means a 429
+        cut the pass short and the coordinator should apply a cross-cycle backoff.
         """
         if not names_to_fetch:
-            return {}
+            return {}, False
 
         sorted_by_age = sorted(
             names_to_fetch,
@@ -73,7 +74,7 @@ class RollingPriceFetcher:
         def _on_progress(idx: int, total: int, name: str, price: float | None) -> None:
             attempted.append(name)
 
-        fresh_prices = steam_market.fetch_prices_parallel(
+        fresh_prices, circuit_broken = steam_market.fetch_prices_parallel(
             http,
             chunk,
             on_progress=_on_progress,
@@ -86,4 +87,4 @@ class RollingPriceFetcher:
         for name in attempted:
             self.timestamps[name] = now
 
-        return fresh_prices
+        return fresh_prices, circuit_broken

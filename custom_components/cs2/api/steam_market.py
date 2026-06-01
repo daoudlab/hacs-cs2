@@ -63,18 +63,6 @@ class RateLimits:
     abort_on_429: bool = False  # circuit-breaker: abort the whole pass on first 429
 
     @classmethod
-    def patient(cls) -> "RateLimits":
-        return cls(
-            request_delay_min=5.0,
-            request_delay_max=7.0,
-            requests_before_pause=15,
-            pause_seconds=30,
-            max_retries=10,
-            retry_backoff_base=2,
-            max_backoff=300,
-        )
-
-    @classmethod
     def coordinator(cls) -> "RateLimits":
         """Conservative pacing (4.5-6s) stays under the ~20 req/min Steam limit.
         Circuit-breaker on first 429: abort the pass and return prices so far.
@@ -132,12 +120,17 @@ def fetch_prices(
     limits: RateLimits | None = None,
     stop: threading.Event | None = None,
     app_id: int = _DEFAULT_APP_ID,
-) -> dict[str, float]:
-    """Sequentially fetch Steam Market prices with rate limiting."""
+) -> tuple[dict[str, float], bool]:
+    """Sequentially fetch Steam Market prices with rate limiting.
+
+    Returns (prices, circuit_broken) where circuit_broken=True means a 429
+    cut the pass short — the caller should apply a cross-cycle backoff.
+    """
     rl = limits or RateLimits()
     results: dict[str, float] = {}
     request_count = 0
     total = len(names)
+    circuit_broken = False
 
     for idx, name in enumerate(names, 1):
         if stop and stop.is_set():
@@ -149,6 +142,7 @@ def fetch_prices(
                 "Circuit-breaker at item %d/%d — returning %d prices collected so far",
                 idx, total, len(results),
             )
+            circuit_broken = True
             break
         if price is not None:
             results[name] = price
@@ -168,7 +162,7 @@ def fetch_prices(
             _sleep(random.uniform(rl.request_delay_min, rl.request_delay_max), stop)
 
     _LOGGER.info("Fetched %d/%d prices from Steam Market", len(results), total)
-    return results
+    return results, circuit_broken
 
 
 def _fetch_one(
@@ -245,12 +239,15 @@ def fetch_prices_parallel(
     limits: RateLimits | None = None,
     stop: threading.Event | None = None,
     app_id: int = _DEFAULT_APP_ID,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], bool]:
     """Fetch prices with bounded parallelism (MAX_WORKERS=3).
 
     httpx.Client is thread-safe — the connection pool is shared across workers.
     Inter-batch pause every _BATCH_PAUSE_EVERY batches (~21 requests) to avoid
     triggering Steam's rate limiter at the IP level.
+
+    Returns (prices, circuit_broken) where circuit_broken=True means a 429
+    cut the pass short — the caller should apply a cross-cycle backoff.
     """
     rl = limits or RateLimits()
     workers = rl.parallel_workers
@@ -258,6 +255,7 @@ def fetch_prices_parallel(
     total = len(names)
     batches = [names[i: i + workers] for i in range(0, total, workers)]
     completed = 0
+    circuit_broken = False
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         for batch_idx, batch in enumerate(batches):
@@ -278,7 +276,8 @@ def fetch_prices_parallel(
                         "Circuit-breaker at item %d/%d — returning %d prices collected so far",
                         completed, total, len(results),
                     )
-                    return results
+                    circuit_broken = True
+                    return results, circuit_broken
                 except Exception as exc:
                     _LOGGER.warning("fetch_one raised for %s: %s", name, type(exc).__name__)
                     price = None
@@ -302,7 +301,7 @@ def fetch_prices_parallel(
                     _sleep(random.uniform(rl.request_delay_min, rl.request_delay_max), stop)
 
     _LOGGER.info("Fetched %d/%d prices from Steam Market (parallel)", len(results), total)
-    return results
+    return results, circuit_broken
 
 
 def normalize_price(raw: str | None) -> float | None:

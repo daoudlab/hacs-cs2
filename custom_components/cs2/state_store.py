@@ -105,6 +105,10 @@ class CS2Store:
         else:
             last_discovery = None
 
+        # Cap stored market cooldown too, same clock-jump protection as inv_cooldown
+        raw_market_rl = float(data.get("market_rl_until", 0.0))
+        market_rl_until = min(raw_market_rl, now + _MAX_COOLDOWN_OFFSET) if raw_market_rl > now else 0.0
+
         return {
             "entity_pictures": data.get("entity_pictures", {}),
             "current_prices": data.get("current_prices", {}),
@@ -117,6 +121,8 @@ class CS2Store:
             "price_timestamps": data.get("price_timestamps", {}),
             "inv_cooldown": merged_cd,
             "stale_data": result_from_json(data.get("last_coordinator_result")),
+            "market_rl_until": market_rl_until,
+            "market_rl_consecutive": int(data.get("market_rl_consecutive", 0)),
         }
 
     async def async_save(
@@ -133,6 +139,8 @@ class CS2Store:
         price_timestamps: dict[str, float],
         inv_cooldown: dict[str, float],
         stale_data: dict | None,
+        market_rl_until: float = 0.0,
+        market_rl_consecutive: int = 0,
     ) -> None:
         """Persist full coordinator state to HA storage."""
         now = time.time()
@@ -150,6 +158,8 @@ class CS2Store:
                     "price_timestamps": price_timestamps,
                     "inv_cooldown": {k: v for k, v in inv_cooldown.items() if v > now},
                     "last_coordinator_result": result_to_json(stale_data),
+                    "market_rl_until": market_rl_until if market_rl_until > now else 0.0,
+                    "market_rl_consecutive": market_rl_consecutive,
                 }
             )
         except Exception as err:
@@ -159,12 +169,16 @@ class CS2Store:
         self,
         inv_cooldown: dict[str, float],
         stale_data: dict | None,
+        market_rl_until: float = 0.0,
+        market_rl_consecutive: int = 0,
     ) -> None:
-        """Fast-path: persist only cooldown (and opportunistically stale_data)."""
+        """Fast-path: persist cooldowns (and opportunistically stale_data)."""
         now = time.time()
         try:
             data = await self._store.async_load() or {}
             data["inv_cooldown"] = {k: v for k, v in inv_cooldown.items() if v > now}
+            data["market_rl_until"] = market_rl_until if market_rl_until > now else 0.0
+            data["market_rl_consecutive"] = market_rl_consecutive
             # Only write stale_data if not already present (avoid overwriting a good snapshot)
             if stale_data and not data.get("last_coordinator_result"):
                 data["last_coordinator_result"] = result_to_json(stale_data)

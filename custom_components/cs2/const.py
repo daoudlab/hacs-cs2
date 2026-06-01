@@ -23,7 +23,9 @@ SENSOR_TOTAL_ID = "sensor.steam_inventory_total"
 SENSOR_GAME_PREFIX = "sensor.steam_inventory_"        # + slug + "_total"
 SENSOR_ITEM_PREFIX = "sensor.steam_inventory_"        # + make_slug(market_hash_name)
 SENSOR_SYNC_ID = "sensor.steam_inventory_sync_status"
-SENSOR_WATCHLIST_PREFIX = "sensor.steam_inventory_"   # + make_slug(market_hash_name)
+# Watchlist sensors use a distinct prefix to avoid collision with inventory item sensors
+# (a watchlist item and an owned item can have the same market_hash_name)
+SENSOR_WATCHLIST_PREFIX = "sensor.steam_watch_"       # + make_slug(market_hash_name)
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "cs2_inventory_state"
@@ -34,13 +36,15 @@ CONF_STEAM_COOKIE = "steam_cookie"
 
 STEAM_HISTORY_URL = (
     "https://steamcommunity.com/market/pricehistory/"
-    "?appid=730&currency=3&market_hash_name={name}"
+    "?appid={appid}&currency=3&market_hash_name={name}"
 )
 
 SERVICE_RUN_IMPORT = "run_import"
 SERVICE_GENERATE_DASHBOARDS = "generate_dashboards"
 SERVICE_FORCE_REFRESH = "force_refresh"
 SERVICE_SET_BUY_PRICE = "set_buy_price"
+SERVICE_WATCHLIST_ADD = "watchlist_add"
+SERVICE_WATCHLIST_REMOVE = "watchlist_remove"
 
 # ── Extra config keys ──────────────────────────────────────────────────────────
 CONF_FETCH_FLOATS = "fetch_floats"

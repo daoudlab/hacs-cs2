@@ -79,6 +79,38 @@
           "description": "Purchase price in EUR. Set to 0 or leave empty to remove the entry."
         }
       }
+    },
+    "watchlist_add": {
+      "name": "Add to Watchlist",
+      "description": "Add or update an item in the price watchlist (cs2_watchlist.json).",
+      "fields": {
+        "market_hash_name": {
+          "name": "Market Hash Name",
+          "description": "Exact Steam market name (e.g. 'AWP | Dragon Lore (Factory New)')."
+        },
+        "target_price": {
+          "name": "Target Price (EUR)",
+          "description": "Alert threshold — item appears in 'below target' when price ≤ this value."
+        },
+        "note": {
+          "name": "Note",
+          "description": "Optional note (reason for watching, condition, etc.)."
+        },
+        "appid": {
+          "name": "Steam App ID",
+          "description": "Steam App ID (730 = CS2, 570 = Dota 2, 440 = TF2, etc.)."
+        }
+      }
+    },
+    "watchlist_remove": {
+      "name": "Remove from Watchlist",
+      "description": "Remove an item from the price watchlist (cs2_watchlist.json).",
+      "fields": {
+        "market_hash_name": {
+          "name": "Market Hash Name",
+          "description": "Exact Steam market name to remove."
+        }
+      }
     }
   },
   "options": {

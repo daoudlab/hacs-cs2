@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -95,7 +96,7 @@ async def async_setup_entry(
 
 class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:steam"
     _attr_has_entity_name = True
@@ -103,7 +104,7 @@ class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
+            identifiers={(DOMAIN, coordinator._device_unique_id)},
             name="Steam Inventory",
             manufacturer="Valve",
             model="Steam Market",
@@ -124,6 +125,8 @@ class SteamTotalSensor(_SteamBase):
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
+        # Explicit entity_id ensures stability regardless of HA's name-slugification
+        self.entity_id = "sensor.steam_inventory_total"
 
     @property
     def native_value(self) -> float | None:
@@ -157,7 +160,7 @@ class SteamTotalSensor(_SteamBase):
 # ── Per-game total sensor ──────────────────────────────────────────────────────
 
 class SteamGameSensor(_SteamBase):
-    """Per-game portfolio total — sensor.steam_{slug}_total."""
+    """Per-game portfolio total — sensor.steam_inventory_{slug}_total."""
 
     def __init__(self, coordinator: CS2Coordinator, slug: str, game_name: str) -> None:
         super().__init__(coordinator)
@@ -165,6 +168,10 @@ class SteamGameSensor(_SteamBase):
         self._game_name = game_name
         self._attr_unique_id = f"steam_game_{slug}_total"
         self._attr_name = f"{game_name} Total"
+        # Explicit entity_id: HA's name-slugification of "Dota 2 Total" → "dota_2_total"
+        # (with underscore before digit), but slugs like "dota2" have no separator.
+        # Setting entity_id directly avoids the mismatch on new installs.
+        self.entity_id = f"sensor.steam_inventory_{slug}_total"
 
     def _game(self) -> dict:
         return (self.coordinator.data or {}).get("per_game", {}).get(self._slug, {})
@@ -220,6 +227,9 @@ class SteamItemSensor(_SteamBase):
         self._prefix = prefix
         self._attr_unique_id = f"steam_item_{prefix}{slug}"
         self._attr_name = market_name
+        # Explicit entity_id — dashboard references sensor.steam_inventory_{slug}
+        # (without game_slug prefix, since each market_hash_name is globally unique on Steam)
+        self.entity_id = f"sensor.steam_inventory_{slug}"
 
     def _item(self) -> dict:
         key = f"{self._game_slug}__{self._slug}" if self._game_slug else self._slug
@@ -262,17 +272,19 @@ class SteamItemSensor(_SteamBase):
 # ── Sync status sensor ────────────────────────────────────────────────────────
 
 class SteamSyncSensor(_SteamBase):
-    """Integration health sensor — sensor.steam_sync_status."""
+    """Integration health sensor — sensor.steam_inventory_sync_status."""
 
     _attr_unique_id = "steam_sync_status"
     _attr_name = "Sync Status"
     _attr_icon = "mdi:sync"
-    _attr_device_class = None
+    _attr_device_class = SensorDeviceClass.ENUM
     _attr_state_class = None
     _attr_native_unit_of_measurement = None
+    _attr_options = ["ok", "degraded", "rate_limited", "market_limited", "error", "no_games"]
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
+        self.entity_id = "sensor.steam_inventory_sync_status"
 
     @property
     def native_value(self) -> str:
@@ -284,6 +296,8 @@ class SteamSyncSensor(_SteamBase):
         stats = self.coordinator.last_cycle_stats
         if stats.get("banned_accounts", 0) > 0:
             return "rate_limited"
+        if stats.get("market_rl_until", 0.0) > time.time():
+            return "market_limited"
         items_count = stats.get("items_count", 0)
         missing_count = data.get("missing_count", 0)
         if items_count > 0 and missing_count > 0:
@@ -295,6 +309,8 @@ class SteamSyncSensor(_SteamBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         stats = self.coordinator.last_cycle_stats
         data = self.coordinator.data or {}
+        market_rl_until = stats.get("market_rl_until", 0.0)
+        prog = self.coordinator._import_progress
         return {
             "last_update": stats.get("last_update"),
             "cycle_duration_s": stats.get("cycle_duration_s"),
@@ -305,6 +321,10 @@ class SteamSyncSensor(_SteamBase):
             "missing_count": data.get("missing_count"),
             "last_update_success": self.coordinator.last_update_success,
             "banned_accounts": stats.get("banned_accounts", 0),
+            "market_rl_active": market_rl_until > time.time(),
+            "market_rl_consecutive": stats.get("market_rl_consecutive", 0),
+            "import_running": prog.get("running", False) if prog else False,
+            "import_progress": prog if prog else None,
         }
 
 
@@ -324,6 +344,8 @@ class SteamWatchlistSensor(_SteamBase):
         self._attr_unique_id = f"steam_watch_{slug}"
         self._attr_name = market_name[:50]
         self._attr_icon = "mdi:eye"
+        # Distinct prefix avoids collision with inventory item sensors that share the same slug
+        self.entity_id = f"sensor.steam_watch_{slug}"
 
     def _watch(self) -> dict:
         return (self.coordinator.data or {}).get("watchlist_by_slug", {}).get(self._slug, {})
