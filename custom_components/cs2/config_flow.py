@@ -29,6 +29,7 @@ from .const import (
     CONF_STEAM_COOKIE,
     STEAM_INVENTORY_URL,
 )
+from .utils import parse_steam_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,23 +58,8 @@ def _test_steam_connection(steam_id: str) -> str:
         return "⚠️ Steam inaccessible — l'intégration fonctionnera quand le réseau sera disponible"
 
 
-def _parse_steam_ids(raw: str) -> list[tuple[str, str]]:
-    """Parse 'steamid:name,steamid:name' or plain comma-separated IDs."""
-    accounts = []
-    for part in raw.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if ":" in part:
-            sid, name = part.split(":", 1)
-            accounts.append((sid.strip(), name.strip()))
-        else:
-            accounts.append((part, f"account_{part[-8:]}"))
-    return accounts
-
-
 def _validate_steam_ids(raw: str) -> list[tuple[str, str]]:
-    accounts = _parse_steam_ids(raw)
+    accounts = parse_steam_ids(raw)
     if not accounts:
         raise vol.Invalid("At least one Steam ID required")
     for sid, _ in accounts:
@@ -179,16 +165,18 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 _date.fromisoformat(start_date)
             except ValueError:
-                errors["base"] = "invalid_date"
+                errors["import_start_date"] = "invalid_date"
 
             if not errors:
                 self._data[CONF_IMPORT_START_DATE] = start_date
 
-                accounts = _parse_steam_ids(self._data[CONF_STEAM_IDS])
+                accounts = parse_steam_ids(self._data[CONF_STEAM_IDS])
                 title = " + ".join(name for _, name in accounts)
 
                 if cookie:
-                    # Key by steam_ids so async_setup_entry can find it without storing flow_id in entry.data
+                    # Key by steam_ids so async_setup_entry can find it without storing flow_id in entry.data.
+                    # async_setup_entry pops this immediately (before any await that could fail)
+                    # so the cookie is never left dangling in hass.data.
                     self.hass.data.setdefault(DOMAIN, {}).setdefault("pending_imports", {})[
                         self._data[CONF_STEAM_IDS]
                     ] = {"cookie": cookie, "start_date": start_date}
@@ -206,11 +194,8 @@ class CS2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={
-                "note": (
-                    f"Laissez le cookie vide pour ignorer l'import historique. "
-                    f"Laissez la date vide pour importer depuis le {default_start} "
-                    f"({history_days} jours, selon votre rétention configurée)."
-                )
+                "default_start": default_start,
+                "history_days": str(history_days),
             },
         )
 

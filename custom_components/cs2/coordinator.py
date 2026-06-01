@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 import httpx
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import storage
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -31,7 +28,6 @@ from .const import (
     CONF_FETCH_FLOATS,
     CONF_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
-    DEFAULT_FETCH_CHUNK_SIZE,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
@@ -42,99 +38,20 @@ from .const import (
     WATCHLIST_FILE,
     TARGETS_FILE,
 )
+from .price_tracker import RollingPriceFetcher
 from .slugify import make_slug
+from .state_store import CS2Store
+from .utils import (
+    load_json_list,
+    load_json_prices,
+    load_json_targets,
+    parse_steam_ids,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 _DISCOVERY_INTERVAL = datetime.timedelta(days=7)
 _SNAPSHOT_KEEP_DAYS = 10
-
-
-def _result_to_json(result: dict) -> str | None:
-    """Serialize coordinator result payload for cold-restart persistence."""
-    try:
-        r = {
-            "global": result.get("global", {}),
-            "per_game": result.get("per_game", {}),
-            "items": result.get("items", []),
-            "active_apps": [list(a) for a in result.get("active_apps", [])],
-            "stale_count": result.get("stale_count", 0),
-            "missing_count": result.get("missing_count", 0),
-            "watchlist": result.get("watchlist", []),
-        }
-        return json.dumps(r, ensure_ascii=False, default=str)
-    except Exception:
-        return None
-
-
-def _result_from_json(raw: str | None) -> dict | None:
-    """Deserialize coordinator result payload from store."""
-    if not raw:
-        return None
-    try:
-        r = json.loads(raw)
-        r["active_apps"] = [tuple(a) for a in r.get("active_apps", [])]
-        items = r.get("items", [])
-        r["items_by_slug"] = {f"{i.get('game_slug')}__{i.get('slug')}": i for i in items}
-        watchlist = r.get("watchlist", [])
-        r["watchlist_by_slug"] = {w["slug"]: w for w in watchlist if w.get("slug")}
-        r["per_account"] = {}
-        return r
-    except Exception:
-        return None
-
-
-def _parse_steam_ids(raw: str) -> list[tuple[str, str]]:
-    accounts = []
-    for part in raw.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if ":" in part:
-            sid, name = part.split(":", 1)
-            accounts.append((sid.strip(), name.strip()))
-        else:
-            accounts.append((part, f"account_{part[-8:]}"))
-    return accounts
-
-
-def _load_json_prices(config_dir: str, filename: str) -> dict[str, float]:
-    """Load buy or reference prices from {config_dir}/{filename} if present."""
-    path = Path(config_dir) / filename
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return {str(k): float(v) for k, v in data.items() if v is not None}
-    except Exception as err:
-        _LOGGER.warning("Failed to load %s: %s", path, err)
-        return {}
-
-
-def _load_json_list(config_dir: str, filename: str) -> list[dict]:
-    """Load a JSON list from {config_dir}/{filename} if present."""
-    path = Path(config_dir) / filename
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return data if isinstance(data, list) else []
-    except Exception as err:
-        _LOGGER.warning("Failed to load %s: %s", path, err)
-        return []
-
-
-def _load_json_targets(config_dir: str, filename: str) -> dict[str, dict]:
-    """Load price targets from {config_dir}/{filename} if present."""
-    path = Path(config_dir) / filename
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
-    except Exception as err:
-        _LOGGER.warning("Failed to load %s: %s", path, err)
-        return {}
 
 
 class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -150,7 +67,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=datetime.timedelta(minutes=interval),
         )
         self._cfg = cfg
-        self._store = storage.Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._cs2_store = CS2Store(hass, STORAGE_KEY, STORAGE_VERSION)
+        self._price_tracker = RollingPriceFetcher()
+
         self._entity_pictures: dict[str, str] = {}
         self._current_prices: dict[str, float] = {}
         self._previous_prices: dict[str, float] = {}
@@ -158,11 +77,10 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_discovery: datetime.datetime | None = None
         self._price_snapshots: dict[str, dict[str, float]] = {}
         self._float_cache: dict[str, float] = {}
-        self._price_timestamps: dict[str, float] = {}  # name → epoch of last fetch attempt
         self._last_cycle_stats: dict[str, Any] = {}
-        self._alert_state: dict[str, str] = {}  # name → "high" | "low" | "none"
-        self._inv_cooldown: dict[str, float] = {}  # steam_id → epoch when ban expires
-        self._stale_data: dict[str, Any] | None = None  # last successful result, persisted for cold-restart
+        self._alert_state: dict[str, str] = {}
+        self._inv_cooldown: dict[str, float] = {}
+        self._stale_data: dict[str, Any] | None = None
         self._stop = threading.Event()
         self._import_running: bool = False
         self.config_entry = entry
@@ -173,7 +91,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def accounts(self) -> list[tuple[str, str]]:
-        return _parse_steam_ids(self._cfg.get(CONF_STEAM_IDS, ""))
+        return parse_steam_ids(self._cfg.get(CONF_STEAM_IDS, ""))
 
     @property
     def min_item_value(self) -> float:
@@ -198,30 +116,19 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ── Persistence ───────────────────────────────────────────────────────────
 
     async def _async_load_store(self) -> None:
-        data = await self._store.async_load() or {}
-        self._entity_pictures = data.get("entity_pictures", {})
-        self._current_prices = data.get("current_prices", {})
-        self._previous_prices = data.get("previous_prices", {})
-        raw_apps = data.get("active_apps", [])
-        self._active_apps = [tuple(a) for a in raw_apps]
-        last_disc = data.get("last_discovery")
-        if last_disc:
-            dt = datetime.datetime.fromisoformat(last_disc)
-            self._last_discovery = dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)
-        else:
-            self._last_discovery = None
-        self._price_snapshots = data.get("price_snapshots", {})
-        self._float_cache = data.get("float_cache", {})
-        self._alert_state = data.get("alert_state", {})
-        self._price_timestamps = data.get("price_timestamps", {})
-        # Merge: in-memory active bans win over stored values within the same session.
-        # On cold restart _inv_cooldown starts empty, so stored values are authoritative.
-        stored_cd = {k: float(v) for k, v in data.get("inv_cooldown", {}).items()}
-        now_ts = time.time()
-        active_mem = {k: v for k, v in self._inv_cooldown.items() if v > now_ts}
-        self._inv_cooldown = {**stored_cd, **active_mem}
+        loaded = await self._cs2_store.async_load(self._inv_cooldown)
+        self._entity_pictures = loaded["entity_pictures"]
+        self._current_prices = loaded["current_prices"]
+        self._previous_prices = loaded["previous_prices"]
+        self._active_apps = loaded["active_apps"]
+        self._last_discovery = loaded["last_discovery"]
+        self._price_snapshots = loaded["price_snapshots"]
+        self._float_cache = loaded["float_cache"]
+        self._alert_state = loaded["alert_state"]
+        self._price_tracker.load_timestamps(loaded["price_timestamps"])
+        self._inv_cooldown = loaded["inv_cooldown"]
         if self._stale_data is None:
-            self._stale_data = _result_from_json(data.get("last_coordinator_result"))
+            self._stale_data = loaded["stale_data"]
 
     async def _async_save_store(
         self,
@@ -230,9 +137,8 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         price_snapshots: dict[str, dict[str, float]],
         float_cache: dict[str, float],
     ) -> None:
-        self._previous_prices = {**self._current_prices}
-        # Merge new prices into current — never overwrite known prices with 0
-        # (market 429 cycles return empty/zero prices; preserve last good values)
+        self._previous_prices = dict(self._current_prices)
+        # Merge new prices; never overwrite known values with 0 (empty 429 cycles)
         merged = {**self._current_prices}
         merged.update({k: v for k, v in new_prices.items() if v > 0})
         self._current_prices = merged
@@ -240,36 +146,24 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_discovery = dt_util.utcnow()
         self._price_snapshots = price_snapshots
         self._float_cache = float_cache
-        # _price_timestamps and _entity_pictures are instance state — not passed as args
-        try:
-            await self._store.async_save(
-                {
-                    "entity_pictures": self._entity_pictures,
-                    "current_prices": self._current_prices,
-                    "previous_prices": self._previous_prices,
-                    "active_apps": [list(a) for a in active_apps],
-                    "last_discovery": self._last_discovery.isoformat(),
-                    "price_snapshots": price_snapshots,
-                    "float_cache": float_cache,
-                    "alert_state": dict(self._alert_state),
-                    "price_timestamps": self._price_timestamps,
-                    "inv_cooldown": {k: v for k, v in self._inv_cooldown.items() if v > time.time()},
-                    "last_coordinator_result": _result_to_json(self._stale_data),
-                }
-            )
-        except Exception as err:
-            _LOGGER.error("Failed to persist coordinator state: %s", err)
+
+        await self._cs2_store.async_save(
+            entity_pictures=self._entity_pictures,
+            current_prices=self._current_prices,
+            previous_prices=self._previous_prices,
+            active_apps=active_apps,
+            last_discovery=self._last_discovery,
+            price_snapshots=price_snapshots,
+            float_cache=float_cache,
+            alert_state=self._alert_state,
+            price_timestamps=self._price_tracker.timestamps,
+            inv_cooldown=self._inv_cooldown,
+            stale_data=self._stale_data,
+        )
 
     async def _async_save_cooldown_now(self) -> None:
-        """Persist inv_cooldown (and opportunistically stale_data) without a full save."""
-        try:
-            data = await self._store.async_load() or {}
-            data["inv_cooldown"] = {k: v for k, v in self._inv_cooldown.items() if v > time.time()}
-            if self._stale_data and not data.get("last_coordinator_result"):
-                data["last_coordinator_result"] = _result_to_json(self._stale_data)
-            await self._store.async_save(data)
-        except Exception as err:
-            _LOGGER.warning("Failed to persist cooldown state: %s", err)
+        """Persist inv_cooldown and opportunistically stale_data (fast-path)."""
+        await self._cs2_store.async_save_cooldown(self._inv_cooldown, self._stale_data)
 
     # ── Core update ───────────────────────────────────────────────────────────
 
@@ -280,15 +174,13 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             result, save_payload = await self.hass.async_add_executor_job(self._sync_cycle)
             if result is None:
-                # All games skipped (IP ban cooldown) — persist cooldown immediately
+                # All games in cooldown — persist immediately, fall back to stale
                 await self._async_save_cooldown_now()
                 fallback = self.data or self._stale_data
                 if fallback is not None:
-                    _LOGGER.info("All games skipped — serving stale coordinator data")
+                    _LOGGER.info("All games in IP ban cooldown — serving stale data")
                     return fallback
-                # No stale data (e.g. ban during first-ever cycle) — return empty result
-                # so sensors show degraded state, not unavailable
-                _LOGGER.warning("All games skipped and no stale data — returning empty result")
+                _LOGGER.warning("All games in cooldown and no stale data — returning empty result")
                 minimal = _empty_result()
                 minimal["active_apps"] = list(self._active_apps)
                 return minimal
@@ -301,7 +193,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         except steam_inventory.InventoryPrivateError as err:
             raise UpdateFailed(f"Steam inventory private: {err}") from err
         except steam_inventory.InventoryFetchError as err:
-            # Transient fetch error — keep showing last known values
             _LOGGER.warning("Inventory fetch failed: %s — reusing stale data", err)
             fallback = self.data or self._stale_data
             if fallback is not None:
@@ -344,7 +235,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         game_name, appid, count,
                     )
                 if self._stop.wait(0.5):
-                    _LOGGER.info("Discovery interrupted by stop signal — preserving cached apps")
+                    _LOGGER.info("Discovery interrupted — preserving cached apps")
                     return list(self._active_apps) if self._active_apps else list(active.values())
 
         result = list(active.values())
@@ -361,7 +252,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             return {}
         from .api.csgofloat import fetch_floats
         floats = fetch_floats(http, items, cached=self._float_cache, stop=self._stop)
-        # Update persistent cache (asset_id → float)
         for item in items:
             name = item.get("market_hash_name", "")
             asset_id = item.get("asset_id", name)
@@ -396,7 +286,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             self._alert_state[name] = new_state
             if new_state == "none":
-                continue  # price returned to normal range — no event fired
+                continue  # price returned to normal — no event fired
 
             threshold_value = high if new_state == "high" else low
             self.hass.loop.call_soon_threadsafe(
@@ -425,14 +315,13 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         min_val = self.min_item_value
         config_dir = self.hass.config.config_dir
 
-        buy_prices = _load_json_prices(config_dir, "cs2_buy_prices.json")
-        reference_prices = _load_json_prices(config_dir, "cs2_reference_prices.json")
+        buy_prices = load_json_prices(config_dir, "cs2_buy_prices.json")
+        reference_prices = load_json_prices(config_dir, "cs2_reference_prices.json")
         tracked_extras = set(buy_prices) | set(reference_prices)
 
-        watchlist = _load_json_list(config_dir, WATCHLIST_FILE)
-        price_targets = _load_json_targets(config_dir, TARGETS_FILE)
+        watchlist = load_json_list(config_dir, WATCHLIST_FILE)
+        price_targets = load_json_targets(config_dir, TARGETS_FILE)
 
-        # Compute 24h / 7d reference dates
         today = datetime.date.today().isoformat()
         date_24h = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
         date_7d = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
@@ -455,14 +344,13 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             all_fresh_prices: dict[str, float] = {}
             total_stale = 0
             total_missing = 0
+            cycle_asset_ids: set[str] = set()  # track for float_cache pruning
 
             for appid, contextid, slug, game_name in active_apps:
                 if self._stop.is_set():
                     break
 
-                # ── Fetch inventories for this game ────────────────────────────
-                # Keep raw list (duplicates = owned copies) so compute_item_metrics
-                # can count quantity correctly per unique market_hash_name.
+                # ── Fetch inventories ──────────────────────────────────────────
                 raw_items: list[dict] = []
                 accounts_ok = 0
                 accounts_in_cooldown = 0
@@ -482,11 +370,11 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                             stop=self._stop,
                         )
                         accounts_ok += 1
-                    except InventoryBannedError as err:
+                    except InventoryBannedError:
                         cooldown_until = time.time() + 3600
                         self._inv_cooldown[steam_id] = cooldown_until
                         _LOGGER.warning(
-                            "Inventory 401 for %s (%s) — setting 1h cooldown until %s",
+                            "Inventory 401 for %s (%s) — 1h cooldown until %s",
                             account_name, game_name,
                             time.strftime("%H:%M", time.localtime(cooldown_until)),
                         )
@@ -494,6 +382,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     except (steam_inventory.InventoryFetchError, steam_inventory.InventoryPrivateError) as err:
                         _LOGGER.warning("Inventory fetch failed for %s: %s — skipping", account_name, err)
                         continue
+
                     trackable = [
                         item for item in raw
                         if item.get("marketable")
@@ -501,23 +390,28 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     ]
                     for item in trackable:
                         raw_items.append(item)
+                        cycle_asset_ids.add(item.get("asset_id", ""))
                         pic = item.get("entity_picture")
                         if pic:
                             self._entity_pictures[item["market_hash_name"]] = pic
 
                 if accounts_ok == 0 and self.accounts:
                     if accounts_in_cooldown == len(self.accounts):
-                        _LOGGER.info("All %d accounts in cooldown for %s — skipping", len(self.accounts), game_name)
+                        _LOGGER.info(
+                            "All %d accounts in cooldown for %s — skipping",
+                            len(self.accounts), game_name,
+                        )
                     else:
-                        _LOGGER.warning("All %d accounts failed inventory for %s — skipping", len(self.accounts), game_name)
+                        _LOGGER.warning(
+                            "All %d accounts failed inventory for %s — skipping",
+                            len(self.accounts), game_name,
+                        )
                     continue
 
                 inventory = raw_items
                 if cap > 0:
-                    # Sort by best known price descending so cap keeps most-valuable items.
-                    # Include _current_prices so items fetched in previous cycles are
-                    # ordered correctly even when missing from buy/reference price files.
-                    seen_order: dict[str, int] = {}
+                    # Sort by best known price desc so cap keeps the most valuable items
+                    seen_order: dict[str, float] = {}
                     for item in inventory:
                         name = item["market_hash_name"]
                         if name not in seen_order:
@@ -531,7 +425,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         key=lambda i: seen_order.get(i["market_hash_name"], 0.0),
                         reverse=True,
                     )
-                # Unique names in order (preserve first-seen order for cap slice)
+
                 unique_names = list(dict.fromkeys(i["market_hash_name"] for i in inventory))
                 names_to_fetch = unique_names[:cap] if cap > 0 else unique_names
                 names_set = set(names_to_fetch)
@@ -543,34 +437,12 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     appid,
                 )
 
-                # ── Rolling price fetch ────────────────────────────────────────
-                # Pick the CHUNK_SIZE items with the oldest fetch timestamp so
-                # every item gets refreshed roughly every (N/CHUNK_SIZE * interval).
-                # Items never fetched have timestamp 0 and always go first.
-                sorted_by_age = sorted(
-                    names_to_fetch,
-                    key=lambda n: self._price_timestamps.get(n, 0.0),
-                )
-                chunk = sorted_by_age[:DEFAULT_FETCH_CHUNK_SIZE]
-                attempted: list[str] = []
-
-                def _on_progress(
-                    idx: int, total: int, name: str, price: float | None
-                ) -> None:
-                    attempted.append(name)
-
-                fresh_chunk = steam_market.fetch_prices_parallel(
-                    http, chunk,
-                    on_progress=_on_progress,
-                    limits=limits, stop=self._stop, app_id=appid,
+                # ── Rolling price fetch (via RollingPriceFetcher) ──────────────
+                fresh_chunk = self._price_tracker.fetch(
+                    http, names_to_fetch, limits, self._stop, appid
                 )
 
-                now_ts = time.time()
-                for name in attempted:
-                    self._price_timestamps[name] = now_ts
-
-                # Prices for metrics: accumulated current_prices + fresh overrides.
-                # Items outside this cycle's chunk show their last stored price.
+                # Build prices dict: current_prices as baseline, fresh override
                 prices: dict[str, float] = {
                     n: self._current_prices[n]
                     for n in names_to_fetch
@@ -578,29 +450,34 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
                 prices.update({k: v for k, v in fresh_chunk.items() if v > 0})
 
-                stale_used = [n for n in names_to_fetch if n not in fresh_chunk]
-                still_missing = [n for n in names_to_fetch if n not in prices]
+                # Stale = requested but not fresh-fetched this cycle
+                # Missing = not in prices at all (no stored or fresh value)
+                stale_names = [n for n in names_to_fetch if n not in fresh_chunk]
+                missing_names = [n for n in names_to_fetch if n not in prices]
 
                 _LOGGER.debug(
-                    "%s: rolling chunk %d/%d items — %d fresh, %d stale, %d missing",
-                    game_name, len(chunk), len(names_to_fetch),
-                    len(fresh_chunk), len(stale_used) - (len(chunk) - len(fresh_chunk)),
-                    len(still_missing),
+                    "%s: chunk %d/%d — %d fresh, %d stale, %d missing",
+                    game_name,
+                    min(len(names_to_fetch), self._price_tracker._chunk_size),
+                    len(names_to_fetch),
+                    len(fresh_chunk),
+                    len(stale_names) - len(missing_names),
+                    len(missing_names),
                 )
 
-                total_stale += len(stale_used)
-                total_missing += len(still_missing)
+                total_stale += len(stale_names)
+                total_missing += len(missing_names)
 
-                ratio = len(still_missing) / max(len(names_to_fetch), 1)
+                ratio = len(missing_names) / max(len(names_to_fetch), 1)
                 if ratio > strict_ratio:
                     _LOGGER.warning(
-                        "%s: %d/%d prices missing (%.0f%%>strict %.0f%%), using stale",
-                        game_name, len(still_missing), len(names_to_fetch),
+                        "%s: %d/%d prices missing (%.0f%% > strict %.0f%%), using stale",
+                        game_name, len(missing_names), len(names_to_fetch),
                         ratio * 100, strict_ratio * 100,
                     )
 
-                fresh_prices = {k: v for k, v in prices.items() if k not in stale_used}
-                all_fresh_prices.update(fresh_prices)
+                # Only fresh prices contribute to today's snapshot and watchlist
+                all_fresh_prices.update(fresh_chunk)
 
                 # ── Compute per-game metrics ───────────────────────────────────
                 items_data = compute_item_metrics(
@@ -646,41 +523,57 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
                 all_items_flat.extend(items_data)
 
-            # If all games were skipped (IP ban cooldown), signal caller to use stale data
+            # If all games were skipped (IP ban cooldown), signal caller to use stale
             if not all_items_flat and active_apps and not self._stop.is_set():
                 _LOGGER.warning(
-                    "All %d active games skipped this cycle (IP ban cooldown) — returning None for stale fallback",
+                    "All %d active games skipped this cycle (IP ban) — returning None for stale fallback",
                     len(active_apps),
                 )
                 return None, None
 
+            # ── Prune stale entries ────────────────────────────────────────────
+            active_names = {i["name"] for i in all_items_flat}
+            watchlist_names_set = {
+                w["market_hash_name"] for w in watchlist if "market_hash_name" in w
+            }
+            # price_timestamps: keep only active inventory + watchlist names
+            self._price_tracker.prune(active_names | watchlist_names_set)
+            # float_cache: keep only asset_ids seen in this cycle
+            if cycle_asset_ids:
+                self._float_cache = {
+                    k: v for k, v in self._float_cache.items() if k in cycle_asset_ids
+                }
+            # entity_pictures: keep only active inventory names
+            if active_names:
+                self._entity_pictures = {
+                    k: v for k, v in self._entity_pictures.items() if k in active_names
+                }
+
             # ── Watchlist prices ───────────────────────────────────────────────
             watchlist_prices: dict[str, float] = {}
-            watchlist_names = [
+            watchlist_fetch_names = [
                 w["market_hash_name"] for w in watchlist
                 if "market_hash_name" in w
                 and w["market_hash_name"] not in all_fresh_prices
             ]
-            if watchlist_names and not self._stop.is_set():
+            if watchlist_fetch_names and not self._stop.is_set():
                 watchlist_prices = steam_market.fetch_prices_parallel(
-                    http, watchlist_names,
+                    http, watchlist_fetch_names,
                     limits=limits, stop=self._stop, app_id=730,
                 )
                 all_fresh_prices.update(watchlist_prices)
 
             # ── Price threshold alerts ─────────────────────────────────────────
             if price_targets:
-                # Include stale prices so alerts fire even during Steam rate-limit periods
                 combined_prices = {**self._current_prices, **all_fresh_prices}
                 self._check_price_alerts(combined_prices, price_targets)
-                # Purge _alert_state entries for removed targets to avoid unbounded growth
-                self._alert_state = {k: v for k, v in self._alert_state.items() if k in price_targets}
+                self._alert_state = {
+                    k: v for k, v in self._alert_state.items() if k in price_targets
+                }
 
             # ── Global metrics ─────────────────────────────────────────────────
             prev_global = self._previous_total(previous_prices, all_items_flat)
-            global_metrics = compute_global_metrics(
-                all_items_flat, previous_total=prev_global
-            )
+            global_metrics = compute_global_metrics(all_items_flat, previous_total=prev_global)
 
             # ── Price snapshot for today ───────────────────────────────────────
             snapshots = {**self._price_snapshots, today: dict(all_fresh_prices)}
@@ -689,12 +582,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             ).isoformat()
             snapshots = {k: v for k, v in snapshots.items() if k >= cutoff}
 
-        # Snapshot float_cache AFTER game loop so newly fetched floats are persisted
         float_cache = dict(self._float_cache)
-        # Purge entity_pictures for items no longer in any inventory
-        if all_items_flat:
-            active_names = {i["name"] for i in all_items_flat}
-            self._entity_pictures = {k: v for k, v in self._entity_pictures.items() if k in active_names}
         cycle_duration = round(time.monotonic() - cycle_start, 1)
 
         now = time.time()
@@ -720,7 +608,6 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             cycle_duration,
         )
 
-        # Only persist when we have actual fresh data — skip empty cycles (IP ban) to preserve price history
         save_payload = (
             (all_fresh_prices, active_apps, snapshots, float_cache)
             if all_fresh_prices or all_items_flat
@@ -731,8 +618,10 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             {
                 "market_hash_name": w["market_hash_name"],
                 "appid": w.get("appid", 730),
-                # owned watched items have price in all_fresh_prices, not watchlist_prices
-                "current_price": all_fresh_prices.get(w["market_hash_name"]) or watchlist_prices.get(w["market_hash_name"]),
+                "current_price": (
+                    all_fresh_prices.get(w["market_hash_name"])
+                    or watchlist_prices.get(w["market_hash_name"])
+                ),
                 "target_price": w.get("target_price"),
                 "note": w.get("note", ""),
                 "slug": make_slug(w["market_hash_name"]),

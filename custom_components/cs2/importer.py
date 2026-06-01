@@ -1,4 +1,4 @@
-"""Background historical import job — pricehistory → HA recorder statistics."""
+"""Background historical import — pricehistory → HA recorder statistics."""
 from __future__ import annotations
 
 import logging
@@ -8,13 +8,11 @@ from typing import Any
 
 import httpx
 from homeassistant.core import HomeAssistant
-from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
 )
-from homeassistant.util import dt as dt_util
 
 from .api.steam_history import fetch_item_history, interpolate_gaps
 from .const import DOMAIN
@@ -32,7 +30,7 @@ async def async_run_import(
     min_value: float,
     stop=None,
 ) -> dict[str, Any]:
-    """Orchestrate the historical import — runs in executor for HTTP, async for recorder."""
+    """Orchestrate historical import — executor for HTTP, async for recorder."""
     _LOGGER.info(
         "CS2 import: starting for %d items, start_date=%s, min_value=%.2f",
         len(items),
@@ -50,13 +48,16 @@ async def async_run_import(
     )
 
     if result["daily_totals"] and not (stop and stop.is_set()):
-        await _inject_statistics(hass, result["daily_totals"])
+        await _inject_statistics(hass, result["daily_totals"], result["per_game_totals"])
     elif stop and stop.is_set():
-        _LOGGER.info("CS2 import: stopped early — skipping statistic injection to avoid partial data")
+        _LOGGER.info(
+            "CS2 import: stopped early — skipping injection to avoid partial data"
+        )
 
     _LOGGER.info(
-        "CS2 import complete: %d days, %d items fetched, %d skipped",
+        "CS2 import complete: %d global days, %d per-game entries, %d items fetched, %d skipped",
         len(result["daily_totals"]),
+        sum(len(v) for v in result["per_game_totals"].values()),
         result["fetched"],
         result["skipped"],
     )
@@ -72,17 +73,22 @@ def _sync_fetch_histories(
 ) -> dict[str, Any]:
     """Synchronous: fetch pricehistory for all items, aggregate daily totals."""
     daily_totals: dict[str, float] = {}
+    # per_game_totals: {game_slug: {iso_date: total_eur}}
+    per_game_totals: dict[str, dict[str, float]] = {}
     fetched = 0
     skipped = 0
 
     with httpx.Client() as http:
         for item in items:
             if stop and stop.is_set():
-                _LOGGER.info("CS2 import: interrupted by stop signal after %d items", fetched)
+                _LOGGER.info(
+                    "CS2 import: interrupted by stop signal after %d items", fetched
+                )
                 break
 
             name = item.get("name", item.get("market_hash_name", ""))
             qty = item.get("quantity", 1)
+            game_slug = item.get("game_slug", "")
 
             if min_value > 0 and (item.get("current_price") or 0) < min_value:
                 skipped += 1
@@ -98,30 +104,65 @@ def _sync_fetch_histories(
             for ds, price in filled.items():
                 if start_date and ds < start_date:
                     continue
-                daily_totals[ds] = daily_totals.get(ds, 0.0) + price * qty
+                value = price * qty
+                daily_totals[ds] = daily_totals.get(ds, 0.0) + value
+                if game_slug:
+                    game_days = per_game_totals.setdefault(game_slug, {})
+                    game_days[ds] = game_days.get(ds, 0.0) + value
 
             fetched += 1
             if stop:
                 if stop.wait(_IMPORT_DELAY):
-                    _LOGGER.info("CS2 import: interrupted by stop signal after %d items", fetched)
+                    _LOGGER.info(
+                        "CS2 import: interrupted by stop signal after %d items", fetched
+                    )
                     break
             else:
                 time.sleep(_IMPORT_DELAY)
 
-    # Round all totals
     daily_totals = {ds: round(v, 2) for ds, v in daily_totals.items()}
-    return {"daily_totals": daily_totals, "fetched": fetched, "skipped": skipped}
+    per_game_totals = {
+        slug: {ds: round(v, 2) for ds, v in days.items()}
+        for slug, days in per_game_totals.items()
+    }
+    return {
+        "daily_totals": daily_totals,
+        "per_game_totals": per_game_totals,
+        "fetched": fetched,
+        "skipped": skipped,
+    }
 
 
 async def _inject_statistics(
     hass: HomeAssistant,
     daily_totals: dict[str, float],
+    per_game_totals: dict[str, dict[str, float]],
 ) -> None:
     """Inject daily totals into HA recorder as external statistics (idempotent)."""
-    statistic_id = f"{DOMAIN}:portfolio_total"
-    unit = "EUR"
+    # Global portfolio
+    await _inject_one_statistic(
+        hass,
+        statistic_id=f"{DOMAIN}:portfolio_total",
+        name="Steam Portfolio Total",
+        daily_totals=daily_totals,
+    )
+    # Per-game breakdown
+    for game_slug, game_days in per_game_totals.items():
+        await _inject_one_statistic(
+            hass,
+            statistic_id=f"{DOMAIN}:{game_slug}_total",
+            name=f"Steam Portfolio — {game_slug.upper()}",
+            daily_totals=game_days,
+        )
 
-    # Idempotence: find the last already-recorded date and skip older points
+
+async def _inject_one_statistic(
+    hass: HomeAssistant,
+    statistic_id: str,
+    name: str,
+    daily_totals: dict[str, float],
+) -> None:
+    """Inject a single statistic series, skipping dates already recorded."""
     cutoff_date: str | None = None
     try:
         last = await get_last_statistics(hass, 1, statistic_id, False, {"mean"})
@@ -133,42 +174,49 @@ async def _inject_statistics(
                 else:
                     cutoff_date = str(last_start)[:10]
                 _LOGGER.info(
-                    "CS2 import: last recorded stat = %s — skipping older dates",
+                    "CS2 import [%s]: last recorded = %s — skipping older dates",
+                    statistic_id,
                     cutoff_date,
                 )
     except Exception as err:
-        _LOGGER.warning("CS2 import: could not read last statistics, will inject all: %s", err)
+        _LOGGER.warning(
+            "CS2 import [%s]: could not read last statistics, will inject all: %s",
+            statistic_id,
+            err,
+        )
 
     metadata = StatisticMetaData(
         has_mean=True,
         has_sum=False,
-        name="CS2 Portfolio Total",
+        name=name,
         source=DOMAIN,
         statistic_id=statistic_id,
-        unit_of_measurement=unit,
+        unit_of_measurement="EUR",
     )
 
     statistics: list[StatisticData] = []
     for ds in sorted(daily_totals):
         if cutoff_date and ds <= cutoff_date:
-            continue  # already imported
+            continue
         try:
-            dt = datetime.fromisoformat(ds).replace(
-                hour=12, minute=0, tzinfo=timezone.utc
-            )
+            dt = datetime.fromisoformat(ds).replace(hour=12, minute=0, tzinfo=timezone.utc)
         except ValueError:
             continue
         statistics.append(
-            StatisticData(
-                start=dt,
-                state=daily_totals[ds],
-                mean=daily_totals[ds],
-            )
+            StatisticData(start=dt, state=daily_totals[ds], mean=daily_totals[ds])
         )
 
     if statistics:
         async_add_external_statistics(hass, metadata, statistics)
-        _LOGGER.info("CS2 import: injected %d new stat points (skipped=%d already recorded)",
-                     len(statistics), len(daily_totals) - len(statistics))
+        _LOGGER.info(
+            "CS2 import [%s]: injected %d new stat points (%d already recorded)",
+            statistic_id,
+            len(statistics),
+            len(daily_totals) - len(statistics),
+        )
     else:
-        _LOGGER.info("CS2 import: no new stat points to inject (all already recorded up to %s)", cutoff_date)
+        _LOGGER.info(
+            "CS2 import [%s]: no new points to inject (all recorded up to %s)",
+            statistic_id,
+            cutoff_date,
+        )

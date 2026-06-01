@@ -22,9 +22,9 @@
       },
       "import": {
         "title": "Steam Inventory — Historical Import (optional)",
-        "description": "{note}",
+        "description": "Leave the cookie empty to skip historical import. Leave the date empty to import from {default_start} ({history_days} days, based on your configured retention).",
         "data": {
-          "import_start_date": "Import start date (YYYY-MM-DD, empty = full history)",
+          "import_start_date": "Import start date (YYYY-MM-DD, empty = derived from retention)",
           "steam_cookie": "Steam cookie (steamLoginSecure)"
         }
       }
@@ -33,7 +33,8 @@
       "already_configured": "This Steam account is already configured."
     },
     "error": {
-      "invalid_steam_ids": "Invalid Steam ID format. Must be 17-digit numbers, optionally followed by :alias."
+      "invalid_steam_ids": "Invalid Steam ID format. Must be 17-digit numbers, optionally followed by :alias.",
+      "invalid_date": "Invalid date format. Expected YYYY-MM-DD (e.g. 2024-01-15)."
     }
   },
   "services": {

@@ -241,8 +241,11 @@ def fetch_persona_name(client: httpx.Client, steam_id: str) -> str | None:
         resp = _get(url, timeout=10)
         if resp.status_code != 200:
             return None
-        if "<!DOCTYPE" in resp.text[:500].upper():
-            _LOGGER.warning("Unexpected DOCTYPE in Steam profile XML for %s — skipping", steam_id)
+        upper_head = resp.text[:1000].upper()
+        if "<!DOCTYPE" in upper_head or "<!ENTITY" in upper_head:
+            _LOGGER.warning(
+                "Unexpected DOCTYPE/ENTITY in Steam profile XML for %s — skipping", steam_id
+            )
             return None
         root = ET.fromstring(resp.text)
         name_el = root.find("steamID")

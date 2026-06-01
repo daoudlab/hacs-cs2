@@ -287,9 +287,6 @@ class SteamSyncSensor(_SteamBase):
         items_count = stats.get("items_count", 0)
         missing_count = data.get("missing_count", 0)
         if items_count > 0 and missing_count > 0:
-            cycle_s = stats.get("cycle_duration_s") or 0
-            if cycle_s < 3:
-                return "rate_limited"
             if missing_count / items_count > 0.5:
                 return "degraded"
         return "ok"

@@ -61,7 +61,19 @@ def fetch_item_history(
         # entry = ["Nov 01 2021 01: +0", "12.34", "5"]
         try:
             raw_date, raw_price, _ = entry
-            dt = datetime.strptime(raw_date[:11].strip(), "%b %d %Y")
+            # Steam always uses English abbreviated month names (e.g. "Nov 01 2021 01: +0")
+            # Trim to first 11 chars → "Nov 01 2021", try short then long month names
+            date_str = raw_date[:11].strip()
+            dt = None
+            for fmt in ("%b %d %Y", "%B %d %Y", "%b  %d %Y"):
+                try:
+                    dt = datetime.strptime(date_str, fmt)
+                    break
+                except ValueError:
+                    continue
+            if dt is None:
+                _LOGGER.debug("Unrecognised Steam date format: %r — skipping entry", raw_date)
+                continue
             ds = dt.date().isoformat()
             price = float(raw_price)
             if ds not in daily or price > daily[ds]:
