@@ -15,6 +15,16 @@ from homeassistant.components.recorder.statistics import (
     get_last_statistics,
 )
 
+# has_mean is deprecated in favour of mean_type (removed ~HA 2026.x). For a
+# price series the arithmetic mean is correct. Fall back to has_mean=True on
+# HA versions that predate StatisticMeanType (manifest min_ha_version 2024.1).
+try:
+    from homeassistant.components.recorder.models import StatisticMeanType
+
+    _MEAN_META: dict[str, Any] = {"mean_type": StatisticMeanType.ARITHMETIC}
+except ImportError:  # pragma: no cover - HA < 2025.5
+    _MEAN_META = {"has_mean": True}
+
 from .api.steam_history import fetch_item_history, interpolate_gaps
 from .const import DOMAIN
 from .slugify import make_slug
@@ -259,7 +269,7 @@ async def _inject_one_statistic(
         )
 
     metadata = StatisticMetaData(
-        has_mean=True,
+        **_MEAN_META,
         has_sum=False,
         name=name,
         source=DOMAIN,
