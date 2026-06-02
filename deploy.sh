@@ -34,4 +34,4 @@ fi
 echo ""
 echo "✓ Done. Restart Home Assistant, then:"
 echo "  Settings → Devices & Services → Add Integration → search 'CS2'"
-echo "  Enter: 76561190000000001:main,76561190000000002:alt"
+echo "  Enter your Steam IDs, e.g.: <steamid64_1>:<label1>,<steamid64_2>:<label2>"
