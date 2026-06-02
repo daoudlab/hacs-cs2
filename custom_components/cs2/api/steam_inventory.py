@@ -63,9 +63,13 @@ class _Resp:
 
 def _get(url: str, timeout: int = 30) -> _Resp:
     """urllib GET with browser-like headers — avoids httpx TLS fingerprint block."""
-    req = urllib.request.Request(url, headers=HEADERS)
+    # Enforce https — URLs are built from constant Steam templates; this guards
+    # against SSRF / file:// if a template were ever parameterised by host.
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing non-https URL: {url[:32]}")
+    req = urllib.request.Request(url, headers=HEADERS)  # nosec B310 - https enforced above
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310
             return _Resp(r.status, r.read())
     except urllib.error.HTTPError as e:
         return _Resp(e.code, b"")

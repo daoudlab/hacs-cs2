@@ -45,9 +45,11 @@ def _test_steam_connection(steam_id: str) -> str:
     import json as _json
     from .const import HEADERS
     url = STEAM_INVENTORY_URL.format(steam_id=steam_id, appid=730, contextid=2) + "&count=1"
+    if not url.startswith("https://"):  # defence-in-depth, URL is a constant https template
+        return "❌ URL invalide"
     try:
-        req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        req = urllib.request.Request(url, headers=HEADERS)  # nosec B310 - https enforced above
+        with urllib.request.urlopen(req, timeout=8) as resp:  # nosec B310
             body = resp.read().decode("utf-8", errors="replace")
             count = _json.loads(body).get("total_inventory_count", 0)
             return f"✅ Connecté — {count} items CS2 détectés"

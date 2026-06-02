@@ -107,7 +107,9 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         import hashlib
         raw = self._cfg.get(CONF_STEAM_IDS, "").strip()
-        return hashlib.md5(raw.encode()).hexdigest()[:16] if raw else self.config_entry.entry_id
+        # Non-security use: stable device id derived from the Steam IDs.
+        # usedforsecurity=False documents intent and avoids errors under FIPS.
+        return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()[:16] if raw else self.config_entry.entry_id
 
     @property
     def accounts(self) -> list[tuple[str, str]]:
