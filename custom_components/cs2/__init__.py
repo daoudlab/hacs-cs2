@@ -199,8 +199,10 @@ async def _handle_run_import(call: ServiceCall) -> None:
     if not user or not user.is_admin:
         raise HomeAssistantError("cs2.run_import: admin access required")
 
-    cookie = call.data[CONF_STEAM_COOKIE].strip()
-    start_date = (call.data.get(CONF_IMPORT_START_DATE) or "").strip() or None
+    cookie = call.data[CONF_STEAM_COOKIE].strip().strip('"').strip("'")
+    # Tolerate stray surrounding quotes from the UI (YAML/form quirks).
+    start_date = (str(call.data.get(CONF_IMPORT_START_DATE) or "")
+                  .strip().strip('"').strip("'").strip()) or None
     if start_date:
         try:
             from datetime import date as _date
