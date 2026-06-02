@@ -34,7 +34,6 @@ _LOGGER = logging.getLogger(__name__)
 _IMPORT_DELAY = 5.0        # seconds between item fetches — Steam pricehistory
                           # rate-limits at ~1 req/4s; 2.5s triggered 429 → IP ban
                           # after 1-2 items, killing the import. 5s stays safe.
-_TOP_ITEMS_LIMIT = 30      # max per-item stat series injected (by descending current value)
 
 
 async def async_run_import(
@@ -68,23 +67,15 @@ async def async_run_import(
     )
 
     if result["daily_totals"] and not (stop and stop.is_set()):
-        # Select top N items by current value for per-item stat injection
-        top_items = sorted(
-            [i for i in items if (i.get("current_price") or 0) > 0],
-            key=lambda i: (i.get("current_price") or 0) * (i.get("quantity", 1) or 1),
-            reverse=True,
-        )[:_TOP_ITEMS_LIMIT]
-        top_names = {i["name"] for i in top_items}
-        top_histories = {
-            name: hist
-            for name, hist in result["per_item_histories"].items()
-            if name in top_names
-        }
+        # Inject a per-item LTS series for every item we fetched history for.
+        # The price history was already fetched above (one pricehistory request
+        # per item), so injecting all of them is cheap — only items below
+        # min_value were skipped during the fetch.
         await _inject_statistics(
             hass,
             result["daily_totals"],
             result["per_game_totals"],
-            top_histories,
+            result["per_item_histories"],
             unit=unit,
         )
     elif stop and stop.is_set():
