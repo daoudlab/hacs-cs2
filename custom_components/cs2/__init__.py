@@ -23,6 +23,7 @@ from .const import (
     SERVICE_WATCHLIST_ADD,
     SERVICE_WATCHLIST_REMOVE,
     WATCHLIST_FILE,
+    RECOMMENDED_FRONTEND_CARDS,
 )
 from .coordinator import CS2Coordinator
 
@@ -306,6 +307,33 @@ async def _handle_generate_dashboards(call: ServiceCall) -> None:
     coordinator = coordinators[0]
     await hass.async_add_executor_job(
         _write_dashboards, hass.config.config_dir, coordinator.data
+    )
+    await _notify_frontend_cards(hass)
+
+
+async def _notify_frontend_cards(hass: HomeAssistant) -> None:
+    """Surface the HACS frontend cards needed for the enhanced dashboards.
+
+    An HA integration cannot install HACS frontend plugins itself, so we list
+    them in a persistent_notification with their HACS repos.
+    """
+    lines = [
+        f"- **{label}** — `{repo}`" for label, repo in RECOMMENDED_FRONTEND_CARDS
+    ]
+    message = (
+        "Les dashboards générés utilisent des cartes natives HA (aucun module "
+        "requis). Pour le rendu enrichi (vignettes skins, graphiques), installez "
+        "ces cartes via **HACS → Frontend** :\n\n" + "\n".join(lines)
+    )
+    await hass.services.async_call(
+        "persistent_notification",
+        "create",
+        {
+            "title": "CS2 — cartes Lovelace recommandées",
+            "message": message,
+            "notification_id": "cs2_frontend_cards",
+        },
+        blocking=False,
     )
 
 

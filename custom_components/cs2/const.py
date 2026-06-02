@@ -49,6 +49,17 @@ SERVICE_WATCHLIST_REMOVE = "watchlist_remove"
 # ── Extra config keys ──────────────────────────────────────────────────────────
 CONF_FETCH_FLOATS = "fetch_floats"
 
+# ── Recommended HACS frontend cards (for the enhanced/rich dashboards) ─────────
+# An HA *integration* cannot install HACS *frontend* plugins, so we surface them
+# via a persistent_notification (see generate_dashboards). (label, HACS repo)
+RECOMMENDED_FRONTEND_CARDS: list[tuple[str, str]] = [
+    ("Mushroom", "piitaya/lovelace-mushroom"),
+    ("ApexCharts Card", "RomRider/apexcharts-card"),
+    ("Vertical Stack In Card", "ofekashery/vertical-stack-in-card"),
+    ("Layout Card", "thomasloven/lovelace-layout-card"),
+    ("Expander Card", "Alia5/lovelace-expander-card"),
+]
+
 # ── Extra JSON files (in /config/) ────────────────────────────────────────────
 WATCHLIST_FILE = "cs2_watchlist.json"
 TARGETS_FILE = "cs2_price_targets.json"
