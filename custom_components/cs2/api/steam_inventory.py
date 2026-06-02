@@ -17,8 +17,6 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-import httpx  # kept for type hints in coordinator; not used for requests here
-
 from ..const import (
     HEADERS,
     INVENTORY_PAGE_DELAY,
@@ -78,7 +76,6 @@ def _get(url: str, timeout: int = 30) -> _Resp:
 
 
 def check_inventory_count(
-    client: httpx.Client,
     steam_id: str,
     app_id: int,
     context_id: int,
@@ -108,7 +105,6 @@ def check_inventory_count(
 
 
 def fetch_inventory(
-    client: httpx.Client,
     steam_id: str,
     app_id: int = _DEFAULT_APP_ID,
     context_id: int = _DEFAULT_CONTEXT_ID,

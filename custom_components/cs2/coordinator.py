@@ -267,7 +267,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if slug in active:
                     continue
                 count = steam_inventory.check_inventory_count(
-                    http, steam_id, appid, contextid, stop=self._stop
+                    steam_id, appid, contextid, stop=self._stop
                 )
                 if count == -1:
                     # 429 during discovery — abort immediately to avoid ban escalation
@@ -428,7 +428,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         continue
                     try:
                         raw = steam_inventory.fetch_inventory(
-                            http, steam_id, app_id=appid, context_id=contextid,
+                            steam_id, app_id=appid, context_id=contextid,
                             stop=self._stop,
                         )
                         accounts_ok += 1
@@ -548,12 +548,12 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 missing_names = [n for n in names_to_fetch if n not in prices]
 
                 _LOGGER.debug(
-                    "%s: chunk %d/%d — %d fresh, %d stale, %d missing",
+                    "%s: chunk %d/%d — %d fresh, %d stale-priced, %d missing",
                     game_name,
                     min(len(names_to_fetch), self._price_tracker._chunk_size),
                     len(names_to_fetch),
                     len(fresh_chunk),
-                    len(stale_names) - len(missing_names),
+                    len(stale_names) - len(missing_names),  # stale but served from a stored price
                     len(missing_names),
                 )
 
