@@ -96,7 +96,9 @@ async def async_setup_entry(
 
 class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    # MONETARY requires TOTAL (cumulative portfolio value); MEASUREMENT is rejected
+    # by HA. Item/watchlist sensors override device_class=None to keep MEASUREMENT.
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:steam"
     _attr_has_entity_name = True
