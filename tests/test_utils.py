@@ -22,7 +22,7 @@ class TestParseSteamIds:
         assert len(result) == 1
         sid, name = result[0]
         assert sid == "76561190000000001"
-        assert "52859" in name  # auto-generated from last 8 digits
+        assert "00000001" in name  # auto-generated from last 8 digits
 
     def test_empty_string(self):
         assert parse_steam_ids("") == []
