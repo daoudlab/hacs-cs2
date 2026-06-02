@@ -84,8 +84,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if pending and pending.get("cookie"):
         coordinator._import_running = True
         try:
-            hass.async_create_task(
-                _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"), coordinator.min_item_value, stop=coordinator._stop)
+            hass.async_create_background_task(
+                _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"), coordinator.min_item_value, stop=coordinator._stop),
+                name="cs2_run_import_setup",
             )
         except Exception:
             coordinator._import_running = False
@@ -232,14 +233,23 @@ async def _handle_run_import(call: ServiceCall) -> None:
     if not coordinator.data:
         raise HomeAssistantError("cs2.run_import: no data yet — wait for first scan cycle")
 
+    _LOGGER.info(
+        "cs2.run_import: scheduling import (coordinators=%d, picked id=%s, data_ready=%s)",
+        len(coordinators), id(coordinator), bool(coordinator.data),
+    )
     coordinator._import_running = True
     try:
-        hass.async_create_task(
-            _run_import(hass, coordinator, cookie, start_date, min_value, stop=coordinator._stop)
+        # Long-running fire-and-forget work: use a background task so HA keeps a
+        # strong reference and the coroutine is actually scheduled to run. A plain
+        # async_create_task created from a service handler can fail to execute.
+        hass.async_create_background_task(
+            _run_import(hass, coordinator, cookie, start_date, min_value, stop=coordinator._stop),
+            name="cs2_run_import",
         )
     except Exception:
         coordinator._import_running = False
         raise
+    _LOGGER.info("cs2.run_import: background task scheduled")
 
 
 async def _run_import(
@@ -250,6 +260,7 @@ async def _run_import(
     min_value: float = DEFAULT_MIN_VALUE,
     stop=None,
 ) -> None:
+    _LOGGER.info("cs2 import: coroutine top (coordinator id=%s)", id(coordinator))
     start = _time.monotonic()
     try:
         _LOGGER.info(
