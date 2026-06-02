@@ -1,21 +1,15 @@
 generate_dashboards:
-  name: Generate Dashboard YAML
-  admin: true
-  description: >
+  name: Generate Dashboard YAML  description: >
     Write Lovelace dashboard YAML files to /config/steam_dashboards/:
     one global dashboard + one per detected game.
 
 force_refresh:
-  name: Force Refresh
-  admin: true
-  description: >
+  name: Force Refresh  description: >
     Trigger an immediate inventory + price refresh without waiting
     for the next scheduled interval.
 
 set_buy_price:
-  name: Set Buy Price
-  admin: true
-  description: >
+  name: Set Buy Price  description: >
     Set or remove the purchase price for an item in cs2_buy_prices.json.
     Set price to 0 or leave empty to remove the entry.
   fields:
@@ -39,9 +33,7 @@ set_buy_price:
           unit_of_measurement: EUR
 
 run_import:
-  name: Run Historical Import
-  admin: true
-  description: >
+  name: Run Historical Import  description: >
     Import historical Steam Market price data into HA long-term statistics.
     Requires a valid Steam session cookie (steamLoginSecure).
     The cookie is used only for fetching data and is never stored.
@@ -73,9 +65,7 @@ run_import:
           unit_of_measurement: EUR
 
 watchlist_add:
-  name: Add to Watchlist
-  admin: true
-  description: >
+  name: Add to Watchlist  description: >
     Add or update an item in the price watchlist (cs2_watchlist.json).
     A sensor is created for the item and its price is fetched each cycle.
   fields:
@@ -114,9 +104,7 @@ watchlist_add:
           mode: box
 
 watchlist_remove:
-  name: Remove from Watchlist
-  admin: true
-  description: Remove an item from the price watchlist (cs2_watchlist.json).
+  name: Remove from Watchlist  description: Remove an item from the price watchlist (cs2_watchlist.json).
   fields:
     market_hash_name:
       name: Market Hash Name

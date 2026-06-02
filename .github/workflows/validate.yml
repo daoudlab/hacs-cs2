@@ -24,6 +24,9 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # brands are only required for the default HACS store; this is a
+          # custom repository (added by URL), so we skip that check.
+          ignore: brands
 
   tests:
     name: Pytest
@@ -33,5 +36,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install pytest httpx
+      - run: pip install pytest httpx pyyaml
       - run: python -m pytest -q
