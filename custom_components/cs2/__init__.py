@@ -244,6 +244,10 @@ async def _run_import(
 ) -> None:
     from .importer import async_run_import
 
+    _LOGGER.info(
+        "cs2 import: task entered (start_date=%s, min_value=%s, data_ready=%s)",
+        start_date, min_value, bool(coordinator.data),
+    )
     # Wait for first coordinator refresh to complete (covers first-install race)
     deadline = _time.monotonic() + 300  # max 5 minutes
     while not coordinator.data:
