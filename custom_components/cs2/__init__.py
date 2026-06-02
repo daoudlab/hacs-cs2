@@ -83,9 +83,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if pending and pending.get("cookie"):
         coordinator._import_running = True
-        hass.async_create_task(
-            _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"), coordinator.min_item_value, stop=coordinator._stop)
-        )
+        try:
+            hass.async_create_task(
+                _run_import(hass, coordinator, pending["cookie"], pending.get("start_date"), coordinator.min_item_value, stop=coordinator._stop)
+            )
+        except Exception:
+            coordinator._import_running = False
+            raise
 
     # Register services (once per domain)
     if not hass.services.has_service(DOMAIN, SERVICE_RUN_IMPORT):
@@ -229,9 +233,13 @@ async def _handle_run_import(call: ServiceCall) -> None:
         raise HomeAssistantError("cs2.run_import: no data yet — wait for first scan cycle")
 
     coordinator._import_running = True
-    hass.async_create_task(
-        _run_import(hass, coordinator, cookie, start_date, min_value, stop=coordinator._stop)
-    )
+    try:
+        hass.async_create_task(
+            _run_import(hass, coordinator, cookie, start_date, min_value, stop=coordinator._stop)
+        )
+    except Exception:
+        coordinator._import_running = False
+        raise
 
 
 async def _run_import(
@@ -242,50 +250,64 @@ async def _run_import(
     min_value: float = DEFAULT_MIN_VALUE,
     stop=None,
 ) -> None:
-    from .importer import async_run_import
-
-    _LOGGER.info(
-        "cs2 import: task entered (start_date=%s, min_value=%s, data_ready=%s)",
-        start_date, min_value, bool(coordinator.data),
-    )
-    # Wait for first coordinator refresh to complete (covers first-install race)
-    deadline = _time.monotonic() + 300  # max 5 minutes
-    while not coordinator.data:
-        if _time.monotonic() > deadline or (stop and stop.is_set()):
-            _LOGGER.warning("cs2 import: timed out waiting for coordinator data — skipping")
-            coordinator._import_running = False
-            return
-        await asyncio.sleep(10)
-
-    items = (coordinator.data or {}).get("items", [])
-    if not items:
-        _LOGGER.warning("cs2 import: no items in coordinator data, skipping")
-        coordinator._import_running = False
-        return
-
     start = _time.monotonic()
-    coordinator._import_progress = {
-        "running": True, "fetched": 0, "total": len(items), "skipped": 0, "elapsed_s": 0
-    }
-
-    def _progress_cb(fetched: int, total: int, skipped: int) -> None:
-        progress = {
-            "running": True,
-            "fetched": fetched,
-            "total": total,
-            "skipped": skipped,
-            "elapsed_s": int(_time.monotonic() - start),
-        }
-        hass.loop.call_soon_threadsafe(
-            setattr, coordinator, "_import_progress", progress
-        )
-
-    result: dict = {}
     try:
+        _LOGGER.info(
+            "cs2 import: task entered (start_date=%s, min_value=%s, data_ready=%s)",
+            start_date, min_value, bool(coordinator.data),
+        )
+        from .importer import async_run_import
+
+        # Wait for first coordinator refresh to complete (covers first-install race)
+        deadline = _time.monotonic() + 300  # max 5 minutes
+        while not coordinator.data:
+            if _time.monotonic() > deadline or (stop and stop.is_set()):
+                _LOGGER.warning("cs2 import: timed out waiting for coordinator data — skipping")
+                coordinator._import_progress = {
+                    "running": False,
+                    "error": "timed out waiting for coordinator data",
+                    "elapsed_s": int(_time.monotonic() - start),
+                }
+                return
+            await asyncio.sleep(10)
+
+        items = (coordinator.data or {}).get("items", [])
+        if not items:
+            _LOGGER.warning("cs2 import: no items in coordinator data, skipping")
+            coordinator._import_progress = {
+                "running": False,
+                "error": "no items in coordinator data",
+                "elapsed_s": int(_time.monotonic() - start),
+            }
+            return
+
+        coordinator._import_progress = {
+            "running": True, "fetched": 0, "total": len(items), "skipped": 0, "elapsed_s": 0
+        }
+
+        def _progress_cb(fetched: int, total: int, skipped: int) -> None:
+            progress = {
+                "running": True,
+                "fetched": fetched,
+                "total": total,
+                "skipped": skipped,
+                "elapsed_s": int(_time.monotonic() - start),
+            }
+            hass.loop.call_soon_threadsafe(
+                setattr, coordinator, "_import_progress", progress
+            )
+
         result = await async_run_import(
             hass, items, cookie, start_date, min_value, stop=stop, progress_cb=_progress_cb
         )
-        _LOGGER.info("cs2 import finished: %s", result)
+        _LOGGER.info(
+            "cs2 import finished: fetched=%d skipped=%d global_days=%d game_days=%d per_item_series=%d",
+            result.get("fetched", 0),
+            result.get("skipped", 0),
+            len(result.get("daily_totals", {})),
+            sum(len(v) for v in result.get("per_game_totals", {}).values()),
+            len(result.get("per_item_histories", {})),
+        )
         coordinator._import_progress = {
             "running": False,
             "fetched": result.get("fetched", 0),
@@ -294,7 +316,7 @@ async def _run_import(
             "elapsed_s": int(_time.monotonic() - start),
         }
     except Exception as err:
-        _LOGGER.error("cs2 import failed: %s", err)
+        _LOGGER.exception("cs2 import failed")
         coordinator._import_progress = {
             "running": False,
             "error": str(err),
