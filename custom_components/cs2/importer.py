@@ -21,7 +21,9 @@ from .slugify import make_slug
 
 _LOGGER = logging.getLogger(__name__)
 
-_IMPORT_DELAY = 2.5        # seconds between item fetches (polite rate-limit)
+_IMPORT_DELAY = 5.0        # seconds between item fetches — Steam pricehistory
+                          # rate-limits at ~1 req/4s; 2.5s triggered 429 → IP ban
+                          # after 1-2 items, killing the import. 5s stays safe.
 _TOP_ITEMS_LIMIT = 30      # max per-item stat series injected (by descending current value)
 
 
