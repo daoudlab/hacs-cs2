@@ -426,11 +426,12 @@ def _game_dashboard(slug: str, game: dict) -> dict:
             "show_header_toggle": False,
         })
 
-    # Top items for per-item LTS stats (only populated after cs2.run_import)
-    top_stat_items = [
+    # Per-item long-term price history (cs2:item_<slug>), populated by cs2.run_import.
+    # All owned items with a price, most valuable first.
+    item_stat_ids = [
         f"{DOMAIN}:item_{item['slug']}"
-        for item in sorted_items[:5]
-        if (item.get("current_price") or 0) >= 1.0
+        for item in sorted_items
+        if (item.get("current_price") or 0) > 0
     ]
 
     cards_portfolio += [
@@ -450,11 +451,16 @@ def _game_dashboard(slug: str, game: dict) -> dict:
             "days_to_show": 5000,
         },
     ]
-    if top_stat_items:
+    # Chunk per-item LTS into several statistics-graph cards so each stays readable.
+    _LTS_CHUNK = 10
+    total_parts = (len(item_stat_ids) + _LTS_CHUNK - 1) // _LTS_CHUNK
+    for idx in range(0, len(item_stat_ids), _LTS_CHUNK):
+        part = idx // _LTS_CHUNK + 1
+        suffix = f" ({part}/{total_parts})" if total_parts > 1 else ""
         cards_portfolio.append({
             "type": "statistics-graph",
-            "title": f"Top items — prix unitaire LTS (disponible après import)",
-            "entities": top_stat_items,
+            "title": f"Historique LTS par item{suffix} — disponible après cs2.run_import",
+            "entities": item_stat_ids[idx:idx + _LTS_CHUNK],
             "stat_types": ["mean"],
             "period": "month",
             "days_to_show": 5000,
