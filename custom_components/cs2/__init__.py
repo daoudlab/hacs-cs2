@@ -96,8 +96,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=vol.Schema(
                 {
                     vol.Required(CONF_STEAM_COOKIE): str,
-                    vol.Optional(CONF_IMPORT_START_DATE, default=""): str,
-                    vol.Optional(CONF_MIN_ITEM_VALUE, default=DEFAULT_MIN_VALUE): float,
+                    # Accept None: the HA UI sends empty optional fields as null,
+                    # which would fail a bare str/float validator. Handler defaults them.
+                    vol.Optional(CONF_IMPORT_START_DATE, default=""): vol.Any(None, str),
+                    vol.Optional(CONF_MIN_ITEM_VALUE, default=DEFAULT_MIN_VALUE): vol.Any(
+                        None, vol.Coerce(float)
+                    ),
                 }
             ),
         )
@@ -196,14 +200,15 @@ async def _handle_run_import(call: ServiceCall) -> None:
         raise HomeAssistantError("cs2.run_import: admin access required")
 
     cookie = call.data[CONF_STEAM_COOKIE].strip()
-    start_date = call.data.get(CONF_IMPORT_START_DATE, "").strip() or None
+    start_date = (call.data.get(CONF_IMPORT_START_DATE) or "").strip() or None
     if start_date:
         try:
             from datetime import date as _date
             _date.fromisoformat(start_date)
         except ValueError:
             raise HomeAssistantError(f"cs2.run_import: invalid start_date format (expected YYYY-MM-DD): {start_date}")
-    min_value = float(call.data.get(CONF_MIN_ITEM_VALUE, DEFAULT_MIN_VALUE))
+    _mv = call.data.get(CONF_MIN_ITEM_VALUE)
+    min_value = float(_mv) if _mv is not None else DEFAULT_MIN_VALUE
 
     coordinators = [v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, CS2Coordinator)]
     if not coordinators:
