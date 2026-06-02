@@ -158,6 +158,7 @@ def _global_dashboard(data: dict) -> dict:
             "entities": [f"{DOMAIN}:portfolio_total"],
             "stat_types": ["mean"],
             "period": "month",
+            "days_to_show": 5000,
         },
     ]
 
@@ -184,6 +185,7 @@ def _global_dashboard(data: dict) -> dict:
                     "entities": perf_stat_ids,
                     "stat_types": ["mean"],
                     "period": "month",
+                    "days_to_show": 5000,
                 },
                 {
                     "type": "history-graph",
@@ -445,6 +447,7 @@ def _game_dashboard(slug: str, game: dict) -> dict:
             "entities": [f"{DOMAIN}:{slug}_total"],
             "stat_types": ["mean"],
             "period": "month",
+            "days_to_show": 5000,
         },
     ]
     if top_stat_items:
@@ -454,6 +457,7 @@ def _game_dashboard(slug: str, game: dict) -> dict:
             "entities": top_stat_items,
             "stat_types": ["mean"],
             "period": "month",
+            "days_to_show": 5000,
         })
 
     views = [
