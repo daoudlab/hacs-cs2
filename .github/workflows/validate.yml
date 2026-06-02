@@ -38,3 +38,21 @@ jobs:
           python-version: "3.13"
       - run: pip install pytest httpx pyyaml
       - run: python -m pytest -q
+
+  security:
+    name: Security (bandit + pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install bandit pip-audit httpx
+      # Static analysis of our own code — blocks on medium/high findings.
+      - name: Bandit SAST
+        run: bandit -r custom_components/cs2 -ll
+      # Dependency vulnerability audit — informational (a transient advisory in
+      # a dependency should surface but not block the build).
+      - name: pip-audit (dependencies)
+        continue-on-error: true
+        run: pip-audit
