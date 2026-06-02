@@ -352,6 +352,15 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         reference_prices = load_json_prices(config_dir, "cs2_reference_prices.json")
         tracked_extras = set(buy_prices) | set(reference_prices)
 
+        # Seed current prices from reference prices so every owned item shows a
+        # value immediately (instead of 0 until the rolling Market fetch reaches
+        # it). setdefault only fills gaps — real accumulated/fresh Market prices
+        # always take precedence, and the rolling fetcher still refreshes these
+        # (seeded names have no fetch timestamp → treated as stalest first).
+        for _name, _ref in reference_prices.items():
+            if _ref > 0:
+                self._current_prices.setdefault(_name, _ref)
+
         watchlist = load_json_list(config_dir, WATCHLIST_FILE)
         price_targets = load_json_targets(config_dir, TARGETS_FILE)
 

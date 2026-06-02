@@ -1,7 +1,7 @@
 {
   "domain": "cs2",
   "name": "CS2 Inventory",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "config_flow": true,
   "iot_class": "cloud_polling",
   "integration_type": "service",
