@@ -20,11 +20,14 @@ from .const import (
     CONF_INCLUDE_TRADING_CARDS,
     CONF_FETCH_FLOATS,
     CONF_HISTORY_DAYS,
+    CONF_CURRENCY,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
     DEFAULT_HISTORY_DAYS,
+    DEFAULT_CURRENCY,
+    STEAM_CURRENCIES,
     CONF_IMPORT_START_DATE,
     CONF_STEAM_COOKIE,
     STEAM_INVENTORY_URL,
@@ -90,6 +93,9 @@ STEP_SETTINGS_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_HISTORY_DAYS, default=DEFAULT_HISTORY_DAYS): vol.All(
             vol.Coerce(int), vol.Range(min=30, max=3650)
+        ),
+        vol.Optional(CONF_CURRENCY, default=DEFAULT_CURRENCY): vol.All(
+            vol.Coerce(int), vol.In(STEAM_CURRENCIES)
         ),
         vol.Optional(CONF_INCLUDE_TRADING_CARDS, default=False): bool,
         vol.Optional(CONF_FETCH_FLOATS, default=False): bool,
@@ -247,6 +253,10 @@ class CS2OptionsFlow(config_entries.OptionsFlow):
                     CONF_HISTORY_DAYS,
                     default=current.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS),
                 ): vol.All(vol.Coerce(int), vol.Range(min=30, max=3650)),
+                vol.Optional(
+                    CONF_CURRENCY,
+                    default=current.get(CONF_CURRENCY, DEFAULT_CURRENCY),
+                ): vol.All(vol.Coerce(int), vol.In(STEAM_CURRENCIES)),
                 vol.Optional(
                     CONF_INCLUDE_TRADING_CARDS,
                     default=current.get(CONF_INCLUDE_TRADING_CARDS, False),

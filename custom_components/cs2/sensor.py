@@ -105,6 +105,10 @@ class _SteamBase(CoordinatorEntity[CS2Coordinator], SensorEntity):
 
     def __init__(self, coordinator: CS2Coordinator) -> None:
         super().__init__(coordinator)
+        # Monetary sensors follow the configured Steam currency; the enum sync
+        # sensor keeps its class-level unit of None (a unit on enum is rejected).
+        if self._attr_native_unit_of_measurement is not None:
+            self._attr_native_unit_of_measurement = coordinator.currency_code
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator._device_unique_id)},
             name="Steam Inventory",

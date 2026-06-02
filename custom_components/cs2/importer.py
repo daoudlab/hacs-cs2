@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - HA < 2025.5
     _MEAN_META = {"has_mean": True}
 
 from .api.steam_history import fetch_item_history, interpolate_gaps
-from .const import DOMAIN
+from .const import DEFAULT_CURRENCY, DOMAIN
 from .slugify import make_slug
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,6 +45,8 @@ async def async_run_import(
     min_value: float,
     stop=None,
     progress_cb: Callable[[int, int, int], None] | None = None,
+    currency: int = DEFAULT_CURRENCY,
+    unit: str = "EUR",
 ) -> dict[str, Any]:
     """Orchestrate historical import — executor for HTTP, async for recorder."""
     _LOGGER.info(
@@ -62,6 +64,7 @@ async def async_run_import(
         min_value,
         stop,
         progress_cb,
+        currency,
     )
 
     if result["daily_totals"] and not (stop and stop.is_set()):
@@ -82,6 +85,7 @@ async def async_run_import(
             result["daily_totals"],
             result["per_game_totals"],
             top_histories,
+            unit=unit,
         )
     elif stop and stop.is_set():
         _LOGGER.info(
@@ -107,6 +111,7 @@ def _sync_fetch_histories(
     min_value: float,
     stop=None,
     progress_cb: Callable[[int, int, int], None] | None = None,
+    currency: int = DEFAULT_CURRENCY,
 ) -> dict[str, Any]:
     """Synchronous: fetch pricehistory for all items, aggregate daily totals."""
     daily_totals: dict[str, float] = {}
@@ -139,7 +144,7 @@ def _sync_fetch_histories(
                 skipped += 1
                 continue
 
-            history = fetch_item_history(http, name, cookie, stop=stop, app_id=appid)
+            history = fetch_item_history(http, name, cookie, stop=stop, app_id=appid, currency=currency)
             if not history:
                 auth_failures += 1
                 if auth_failures >= 10 and fetched == 0:
@@ -205,6 +210,7 @@ async def _inject_statistics(
     daily_totals: dict[str, float],
     per_game_totals: dict[str, dict[str, float]],
     per_item_histories: dict[str, dict[str, float]] | None = None,
+    unit: str = "EUR",
 ) -> None:
     """Inject daily totals into HA recorder as external statistics (idempotent)."""
     # Global portfolio
@@ -213,6 +219,7 @@ async def _inject_statistics(
         statistic_id=f"{DOMAIN}:portfolio_total",
         name="Steam Portfolio Total",
         daily_totals=daily_totals,
+        unit=unit,
     )
     # Per-game breakdown
     for game_slug, game_days in per_game_totals.items():
@@ -221,6 +228,7 @@ async def _inject_statistics(
             statistic_id=f"{DOMAIN}:{game_slug}_total",
             name=f"Steam Portfolio — {game_slug.upper()}",
             daily_totals=game_days,
+            unit=unit,
         )
     # Per-item top N (unit price, not portfolio value)
     if per_item_histories:
@@ -231,6 +239,7 @@ async def _inject_statistics(
                 statistic_id=f"{DOMAIN}:item_{slug}",
                 name=f"Steam Item — {market_hash_name[:60]}",
                 daily_totals=item_daily,
+                unit=unit,
             )
         _LOGGER.info(
             "CS2 import: injected per-item stats for %d items", len(per_item_histories)
@@ -242,6 +251,7 @@ async def _inject_one_statistic(
     statistic_id: str,
     name: str,
     daily_totals: dict[str, float],
+    unit: str = "EUR",
 ) -> None:
     """Inject a single statistic series, skipping dates already recorded."""
     cutoff_date: str | None = None
@@ -274,7 +284,7 @@ async def _inject_one_statistic(
         name=name,
         source=DOMAIN,
         statistic_id=statistic_id,
-        unit_of_measurement="EUR",
+        unit_of_measurement=unit,
     )
 
     statistics: list[StatisticData] = []

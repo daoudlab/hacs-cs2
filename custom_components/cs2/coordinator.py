@@ -27,12 +27,15 @@ from .const import (
     CONF_INCLUDE_TRADING_CARDS,
     CONF_FETCH_FLOATS,
     CONF_HISTORY_DAYS,
+    CONF_CURRENCY,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_STRICT_RATIO,
     DEFAULT_MIN_VALUE,
     DEFAULT_MAX_ITEMS,
     DEFAULT_HISTORY_DAYS,
+    DEFAULT_CURRENCY,
     KNOWN_MARKETABLE_APPS,
+    currency_code,
     STORAGE_KEY,
     STORAGE_VERSION,
     WATCHLIST_FILE,
@@ -125,6 +128,16 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def history_days(self) -> int:
         return int(self._cfg.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS))
+
+    @property
+    def currency(self) -> int:
+        """Steam currency id used for Market price/history requests."""
+        return int(self._cfg.get(CONF_CURRENCY, DEFAULT_CURRENCY))
+
+    @property
+    def currency_code(self) -> str:
+        """ISO code for the configured currency (sensor unit_of_measurement)."""
+        return currency_code(self.currency)
 
     @property
     def last_cycle_stats(self) -> dict[str, Any]:
@@ -496,7 +509,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # ── Rolling price fetch (via RollingPriceFetcher) ──────────────
                 if not market_rl_active:
                     fresh_chunk, circuit_broken = self._price_tracker.fetch(
-                        http, names_to_fetch, limits, self._stop, appid
+                        http, names_to_fetch, limits, self._stop, appid, currency=self.currency
                     )
                     if circuit_broken:
                         cycle_had_market_429 = True
@@ -640,7 +653,7 @@ class CS2Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             if watchlist_fetch_names and not self._stop.is_set() and not market_rl_active:
                 wl_prices, wl_circuit_broken = steam_market.fetch_prices_parallel(
                     http, watchlist_fetch_names,
-                    limits=limits, stop=self._stop, app_id=730,
+                    limits=limits, stop=self._stop, app_id=730, currency=self.currency,
                 )
                 if wl_circuit_broken and not cycle_had_market_429:
                     cycle_had_market_429 = True

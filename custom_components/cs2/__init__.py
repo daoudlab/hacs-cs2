@@ -309,7 +309,8 @@ async def _run_import(
             )
 
         result = await async_run_import(
-            hass, items, cookie, start_date, min_value, stop=stop, progress_cb=_progress_cb
+            hass, items, cookie, start_date, min_value, stop=stop, progress_cb=_progress_cb,
+            currency=coordinator.currency, unit=coordinator.currency_code,
         )
         _LOGGER.info(
             "cs2 import finished: fetched=%d skipped=%d global_days=%d game_days=%d per_item_series=%d",

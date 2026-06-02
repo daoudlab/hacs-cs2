@@ -13,7 +13,7 @@ import httpx
 
 from .api import steam_market
 from .api.steam_market import RateLimits
-from .const import DEFAULT_FETCH_CHUNK_SIZE
+from .const import DEFAULT_CURRENCY, DEFAULT_FETCH_CHUNK_SIZE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ class RollingPriceFetcher:
         limits: RateLimits,
         stop: threading.Event | None,
         app_id: int,
+        currency: int = DEFAULT_CURRENCY,
     ) -> tuple[dict[str, float], bool]:
         """Fetch prices for the ``chunk_size`` stalest items from ``names_to_fetch``.
 
@@ -81,6 +82,7 @@ class RollingPriceFetcher:
             limits=limits,
             stop=stop,
             app_id=app_id,
+            currency=currency,
         )
 
         now = time.time()

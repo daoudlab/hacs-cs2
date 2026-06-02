@@ -8,6 +8,7 @@ CONF_MIN_ITEM_VALUE = "min_item_value"
 CONF_MAX_ITEMS = "max_items"
 CONF_INCLUDE_TRADING_CARDS = "include_trading_cards"
 CONF_HISTORY_DAYS = "history_days"
+CONF_CURRENCY = "currency"
 
 DEFAULT_SCAN_INTERVAL = 5        # minutes (rolling update: 5 items per cycle)
 DEFAULT_FETCH_CHUNK_SIZE = 5     # items fetched per cycle (~1 req/min average)
@@ -15,6 +16,25 @@ DEFAULT_STRICT_RATIO = 0.30
 DEFAULT_MIN_VALUE = 0.0
 DEFAULT_MAX_ITEMS = 0            # 0 = no cap
 DEFAULT_HISTORY_DAYS = 730       # 2 years of HA recorder statistics by default
+DEFAULT_CURRENCY = 3             # Steam currency id, 3 = EUR
+
+# Steam Market currency id → ISO 4217 code (used as the sensor unit_of_measurement).
+# Common subset matching the steam-community-market enum; 1=USD, 3=EUR, 17=TRY
+# are confirmed against live Steam endpoints. NB: pricehistory amounts are divided
+# by 100 (2-decimal currencies); 0-decimal currencies (JPY/KRW) would need a
+# different divisor — treated as a known limitation, out of scope.
+STEAM_CURRENCIES: dict[int, str] = {
+    1: "USD", 2: "GBP", 3: "EUR", 4: "CHF", 5: "RUB", 6: "PLN", 7: "BRL",
+    8: "JPY", 9: "NOK", 10: "IDR", 11: "MYR", 12: "PHP", 13: "SGD", 14: "THB",
+    15: "VND", 16: "KRW", 17: "TRY", 18: "UAH", 19: "MXN", 20: "CAD", 21: "AUD",
+    22: "NZD", 23: "CNY", 24: "INR", 25: "CLP", 26: "PEN", 27: "COP", 28: "ZAR",
+    29: "HKD", 30: "TWD", 31: "SAR", 32: "AED",
+}
+
+
+def currency_code(currency_id: int) -> str:
+    """ISO code for a Steam currency id, falling back to EUR."""
+    return STEAM_CURRENCIES.get(currency_id, "EUR")
 
 # ── Entity IDs ─────────────────────────────────────────────────────────────────
 # All IDs use "steam_inventory_" because has_entity_name=True + device "Steam Inventory"
@@ -36,7 +56,7 @@ CONF_STEAM_COOKIE = "steam_cookie"
 
 STEAM_HISTORY_URL = (
     "https://steamcommunity.com/market/pricehistory/"
-    "?appid={appid}&currency=3&market_hash_name={name}"
+    "?appid={appid}&currency={currency}&market_hash_name={name}"
 )
 
 SERVICE_RUN_IMPORT = "run_import"
@@ -71,7 +91,7 @@ STEAM_INVENTORY_URL = (
 )
 STEAM_MARKET_PRICE_URL = (
     "https://steamcommunity.com/market/priceoverview/"
-    "?appid={appid}&currency=3&market_hash_name={name}"
+    "?appid={appid}&currency={currency}&market_hash_name={name}"
 )
 STEAM_PROFILE_XML_URL = "https://steamcommunity.com/profiles/{steam_id}/?xml=1"
 
@@ -133,5 +153,7 @@ HEADERS = {
         "Chrome/120.0.0.0 Safari/537.36"
     ),
     "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+    # Neutral locale — price parsing (normalize_price) handles both EU and US
+    # number formats, so this only avoids biasing Steam's response language.
+    "Accept-Language": "en-US,en;q=0.9",
 }

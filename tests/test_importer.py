@@ -237,7 +237,7 @@ class TestSyncFetchHistoriesStop:
         hist = {"2024-01-01": 5.0}
         call_count = 0
 
-        def fake_fetch(http, name, cookie, stop=None, app_id=730):
+        def fake_fetch(http, name, cookie, stop=None, app_id=730, currency=3):
             nonlocal call_count
             call_count += 1
             stop.set()  # signal after first call

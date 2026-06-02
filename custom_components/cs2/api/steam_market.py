@@ -31,6 +31,7 @@ from ..const import (
     RETRY_BACKOFF_BASE,
     STEAM_MARKET_PRICE_URL,
 )
+from ..const import DEFAULT_CURRENCY
 
 _DEFAULT_APP_ID = 730  # CS2 — callers always pass app_id explicitly
 _PARALLEL_WORKERS = 3   # Steam tolerates ~3 concurrent requests per IP
@@ -120,6 +121,7 @@ def fetch_prices(
     limits: RateLimits | None = None,
     stop: threading.Event | None = None,
     app_id: int = _DEFAULT_APP_ID,
+    currency: int = DEFAULT_CURRENCY,
 ) -> tuple[dict[str, float], bool]:
     """Sequentially fetch Steam Market prices with rate limiting.
 
@@ -136,7 +138,7 @@ def fetch_prices(
         if stop and stop.is_set():
             break
         try:
-            price = _fetch_one(client, name, rl, stop=stop, app_id=app_id)
+            price = _fetch_one(client, name, rl, stop=stop, app_id=app_id, currency=currency)
         except _CycleAbort:
             _LOGGER.warning(
                 "Circuit-breaker at item %d/%d — returning %d prices collected so far",
@@ -171,9 +173,10 @@ def _fetch_one(
     rl: RateLimits,
     stop: threading.Event | None = None,
     app_id: int = _DEFAULT_APP_ID,
+    currency: int = DEFAULT_CURRENCY,
 ) -> float | None:
     encoded = urllib.parse.quote(name)
-    url = STEAM_MARKET_PRICE_URL.format(name=encoded, appid=app_id)
+    url = STEAM_MARKET_PRICE_URL.format(name=encoded, appid=app_id, currency=currency)
 
     for attempt in range(rl.max_retries):
         if stop and stop.is_set():
@@ -239,6 +242,7 @@ def fetch_prices_parallel(
     limits: RateLimits | None = None,
     stop: threading.Event | None = None,
     app_id: int = _DEFAULT_APP_ID,
+    currency: int = DEFAULT_CURRENCY,
 ) -> tuple[dict[str, float], bool]:
     """Fetch prices with bounded parallelism (MAX_WORKERS=3).
 
@@ -263,7 +267,7 @@ def fetch_prices_parallel(
                 break
 
             futures = {
-                executor.submit(_fetch_one, client, name, rl, stop=stop, app_id=app_id): name
+                executor.submit(_fetch_one, client, name, rl, stop=stop, app_id=app_id, currency=currency): name
                 for name in batch
             }
             for fut in concurrent.futures.as_completed(futures):

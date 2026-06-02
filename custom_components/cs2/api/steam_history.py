@@ -10,11 +10,14 @@ from datetime import date, datetime, timedelta
 
 import httpx
 
-from ..const import HEADERS, STEAM_HISTORY_URL
+from ..const import DEFAULT_CURRENCY, HEADERS, STEAM_HISTORY_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-_CURRENCY_DIVISOR = 100.0  # Steam returns prices in cents for EUR (currency=3)
+# Steam returns pricehistory amounts in the currency's minor unit (cents) for
+# 2-decimal currencies (EUR, USD, GBP, CAD…). 0-decimal currencies (JPY/KRW)
+# would need a divisor of 1 — known limitation, see const.STEAM_CURRENCIES.
+_CURRENCY_DIVISOR = 100.0
 
 
 def _decode_cookie(raw: str) -> str:
@@ -32,6 +35,7 @@ def fetch_item_history(
     cookie: str,
     stop: threading.Event | None = None,
     app_id: int = 730,
+    currency: int = DEFAULT_CURRENCY,
 ) -> dict[str, float]:
     """Fetch daily max price for one item.
 
@@ -39,7 +43,7 @@ def fetch_item_history(
     Steam returns hourly candles; we take the daily high.
     Retries once on 429 (30s wait) before giving up.
     """
-    url = STEAM_HISTORY_URL.format(appid=app_id, name=urllib.parse.quote(market_hash_name))
+    url = STEAM_HISTORY_URL.format(appid=app_id, name=urllib.parse.quote(market_hash_name), currency=currency)
     headers = {
         **HEADERS,
         "Cookie": f"steamLoginSecure={_decode_cookie(cookie)}",
