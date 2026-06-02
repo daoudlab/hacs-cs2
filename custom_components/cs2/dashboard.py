@@ -157,7 +157,7 @@ def _global_dashboard(data: dict) -> dict:
             "title": "Historique long terme",
             "entities": [f"{DOMAIN}:portfolio_total"],
             "stat_types": ["mean"],
-            "period": {"calendar": {"period": "month"}},
+            "period": "month",
         },
     ]
 
@@ -183,7 +183,7 @@ def _global_dashboard(data: dict) -> dict:
                     "title": "Comparaison jeux (mensuel)",
                     "entities": perf_stat_ids,
                     "stat_types": ["mean"],
-                    "period": {"calendar": {"period": "month"}},
+                    "period": "month",
                 },
                 {
                     "type": "history-graph",
@@ -444,7 +444,7 @@ def _game_dashboard(slug: str, game: dict) -> dict:
             "title": f"Statistiques LTS — {game_name}",
             "entities": [f"{DOMAIN}:{slug}_total"],
             "stat_types": ["mean"],
-            "period": {"calendar": {"period": "month"}},
+            "period": "month",
         },
     ]
     if top_stat_items:
@@ -453,7 +453,7 @@ def _game_dashboard(slug: str, game: dict) -> dict:
             "title": f"Top items — prix unitaire LTS (disponible après import)",
             "entities": top_stat_items,
             "stat_types": ["mean"],
-            "period": {"calendar": {"period": "month"}},
+            "period": "month",
         })
 
     views = [
