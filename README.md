@@ -28,7 +28,7 @@ Track your Steam inventory value in real time directly in Home Assistant. Suppor
 ## Installation via HACS
 
 1. Open HACS → **Integrations** → ⋮ → **Custom repositories**
-2. Add URL `https://github.com/your-username/hacs-cs2` · Category: **Integration**
+2. Add URL `https://github.com/daoudlab/hacs-cs2` · Category: **Integration**
 3. Search for **Steam Inventory** and install
 4. Restart Home Assistant
 5. Go to **Settings → Devices & Services → Add Integration** → search **Steam Inventory**
