@@ -1,2 +1,5 @@
 *.pyc
 __pycache__/
+
+# Graphe graphify (regenerable via: graphify extract . --code-only)
+graphify-out/
