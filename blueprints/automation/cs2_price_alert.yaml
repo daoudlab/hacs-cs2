@@ -1,0 +1,57 @@
+blueprint:
+  name: Steam Inventory — Alerte de prix
+  description: >
+    Déclenche une action quand un item Steam atteint un seuil de prix.
+    Nécessite le fichier cs2_price_targets.json dans /config/.
+    Pour l'installer : Paramètres → Automatisations → Blueprints → Importer.
+  domain: automation
+  input:
+    notify_service:
+      name: Service de notification
+      description: "Service HA à appeler (ex: notify.mobile_app_mon_telephone)"
+      selector:
+        text:
+          type: text
+    threshold_filter:
+      name: Type d'alerte à surveiller
+      default: all
+      selector:
+        select:
+          options:
+            - label: Les deux (prix haut et bas)
+              value: all
+            - label: Prix bas seulement (opportunité d'achat)
+              value: low
+            - label: Prix haut seulement (opportunité de vente)
+              value: high
+
+variables:
+  threshold_filter: !input threshold_filter
+
+trigger:
+  - platform: event
+    event_type: steam_price_alert
+
+condition:
+  - condition: template
+    value_template: >
+      {{ threshold_filter == 'all'
+         or trigger.event.data.threshold_type == threshold_filter }}
+
+action:
+  - service: !input notify_service
+    data:
+      title: >
+        {% if trigger.event.data.threshold_type == 'low' %}
+          📉 Steam — Prix bas atteint
+        {% else %}
+          📈 Steam — Prix haut atteint
+        {% endif %}
+      message: >
+        {{ trigger.event.data.market_hash_name }}
+        — {{ trigger.event.data.current_price }} €
+        (seuil {{ trigger.event.data.threshold_type }} :
+        {{ trigger.event.data.threshold_value }} €)
+
+mode: queued
+max: 10
